@@ -1,0 +1,341 @@
+@import "tailwindcss";
+
+:root {
+  /* Brand & Semantic Colors */
+  --white: #ffffff;
+  --black: #000000;
+  --bg-app: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --border-subtle: #e2e8f0;
+  --accent-primary: #10b981;
+  
+  /* Full Tailwind Color Palette Mappings (consistent with tailwind.config.js) */
+  --purple: #3f3cbb;
+  --midnight: #121063;
+  --metal: #565584;
+  --tahiti: #3ab7bf;
+  --silver: #ecebff;
+  --bubble-gum: #ff77e9;
+  --bermuda: #78dcca;
+  --whatsapp-green: #25D366;
+  --whatsapp-hover: #128C7E;
+
+  /* Slate */
+  --slate-50: #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-200: #e2e8f0;
+  --slate-300: #cbd5e1;
+  --slate-400: #94a3b8;
+  --slate-500: #64748b;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1e293b;
+  --slate-900: #0f172a;
+  --slate-950: #020617;
+
+  /* Gray */
+  --gray-100: #f7fafc;
+  --gray-200: #edf2f7;
+  --gray-300: #e2e8f0;
+  --gray-400: #cbd5e0;
+  --gray-500: #a0aec0;
+  --gray-600: #718096;
+  --gray-700: #4a5568;
+  --gray-800: #2d3748;
+  --gray-900: #1a202c;
+
+  /* Red */
+  --red-100: #fff5f5;
+  --red-200: #fed7d7;
+  --red-300: #feb2b2;
+  --red-400: #fc8181;
+  --red-500: #f56565;
+  --red-600: #e53e3e;
+  --red-700: #c53030;
+  --red-800: #9b2c2c;
+  --red-900: #742a2a;
+
+  /* Orange */
+  --orange-100: #fffaf0;
+  --orange-200: #feebc8;
+  --orange-300: #fbd38d;
+  --orange-400: #f6ad55;
+  --orange-500: #ed8936;
+  --orange-600: #dd6b20;
+  --orange-700: #c05621;
+  --orange-800: #9c4221;
+  --orange-900: #7b341e;
+
+  /* Yellow */
+  --yellow-100: #fffff0;
+  --yellow-200: #fefcbf;
+  --yellow-300: #faf089;
+  --yellow-400: #f6e05e;
+  --yellow-500: #ecc94b;
+  --yellow-600: #d69e2e;
+  --yellow-700: #b7791f;
+  --yellow-800: #975a16;
+  --yellow-900: #744210;
+
+  /* Green */
+  --green-100: #f0fff4;
+  --green-200: #c6f6d5;
+  --green-300: #9ae6b4;
+  --green-400: #68d391;
+  --green-500: #48bb78;
+  --green-600: #38a169;
+  --green-700: #2f855a;
+  --green-800: #276749;
+  --green-900: #22543d;
+
+  /* Teal */
+  --teal-100: #e6fffa;
+  --teal-200: #b2f5ea;
+  --teal-300: #81e6d9;
+  --teal-400: #4fd1c5;
+  --teal-500: #38b2ac;
+  --teal-600: #319795;
+  --teal-700: #2c7a7b;
+  --teal-800: #285e61;
+  --teal-900: #234e52;
+
+  /* Blue */
+  --blue-100: #ebf8ff;
+  --blue-200: #bee3f8;
+  --blue-300: #90cdf4;
+  --blue-400: #63b3ed;
+  --blue-500: #4299e1;
+  --blue-600: #3182ce;
+  --blue-700: #2b6cb0;
+  --blue-800: #2c5282;
+  --blue-900: #2a4365;
+
+  /* Indigo */
+  --indigo-100: #ebf4ff;
+  --indigo-200: #c3dafe;
+  --indigo-300: #a3bffa;
+  --indigo-400: #7f9cf5;
+  --indigo-500: #667eea;
+  --indigo-600: #5a67d8;
+  --indigo-700: #4c51bf;
+  --indigo-800: #434190;
+  --indigo-900: #3c366b;
+
+  /* Emerald */
+  --emerald-50: #ecfdf5;
+  --emerald-100: #d1fae5;
+  --emerald-200: #a7f3d0;
+  --emerald-300: #6ee7b7;
+  --emerald-400: #34d399;
+  --emerald-500: #10b981;
+  --emerald-600: #059669;
+  --emerald-700: #047857;
+  --emerald-800: #065f46;
+  --emerald-900: #064e3b;
+  --emerald-950: #022c22;
+
+  /* Rose */
+  --rose-50: #fff1f2;
+  --rose-100: #ffe4e6;
+  --rose-200: #fecdd3;
+  --rose-300: #fda4af;
+  --rose-400: #fb7185;
+  --rose-500: #f43f5e;
+  --rose-600: #e11d48;
+  --rose-700: #be123c;
+  --rose-800: #9f1239;
+  --rose-900: #881337;
+  --rose-950: #4c0519;
+
+  /* Amber */
+  --amber-50: #fffbeb;
+  --amber-100: #fef3c7;
+  --amber-200: #fde68a;
+  --amber-300: #fcd34d;
+  --amber-400: #fbbf24;
+  --amber-500: #f59e0b;
+  --amber-600: #d97706;
+  --amber-700: #b45309;
+  --amber-800: #92400e;
+  --amber-900: #78350f;
+  --amber-950: #451a03;
+
+  /* Pink */
+  --pink-100: #fff5f7;
+  --pink-200: #fed7e2;
+  --pink-300: #fbb6ce;
+  --pink-400: #f687b3;
+  --pink-500: #ed64a6;
+  --pink-600: #d53f8c;
+  --pink-700: #b83280;
+  --pink-800: #97266d;
+  --pink-900: #702459;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-app: #0f172a;
+    --bg-card: #1e293b;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --border-subtle: #334155;
+  }
+}
+
+@media (forced-colors: active) {
+  * {
+    forced-color-adjust: none !important;
+  }
+  /* Ensure input text remains visible when forced-color-adjust is disabled */
+  input, textarea, select {
+    color: #0f172a !important;
+    background-color: #ffffff !important;
+    border-color: #cbd5e1 !important;
+    -webkit-text-fill-color: #0f172a !important;
+  }
+  input::placeholder, textarea::placeholder {
+    color: #94a3b8 !important;
+    -webkit-text-fill-color: #94a3b8 !important;
+  }
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Global input text visibility safeguard */
+input, textarea, select {
+  color: var(--slate-900, #0f172a);
+  -webkit-text-fill-color: var(--slate-900, #0f172a);
+}
+input::placeholder, textarea::placeholder {
+  color: var(--slate-400, #94a3b8);
+  -webkit-text-fill-color: var(--slate-400, #94a3b8);
+}
+
+/* Custom scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
+
+/* --- Tiered Responsive Architecture --- */
+
+/* 1. Mobile & Small Tablet (< 768px) */
+@media (max-width: 767px) {
+  :root { font-size: 14px; }
+  
+  /* Ensure charts don't overflow small screens */
+  .h-72 { height: 200px !important; }
+}
+
+/* 2. Tablet Portrait (768px - 1023px) */
+@media (min-width: 768px) and (max-width: 1023px) {
+  :root { font-size: 14.5px; }
+  
+  /* Tablet layout for sidebar vs content */
+  aside.md\:relative {
+    width: 200px !important;
+    min-width: 200px !important;
+  }
+}
+
+/* 3. Small Laptop / 1024x768 - 1366x768 */
+@media (min-width: 1024px) and (max-width: 1399px) {
+  :root { font-size: 13px; }
+
+  /* Reclaim space from sidebar on 1024px */
+  aside.md\:relative {
+    width: 170px !important;
+    min-width: 170px !important;
+  }
+
+  aside .p-4.md\:p-6 { padding: 0.75rem !important; }
+  aside h1 { font-size: 0.85rem !important; line-height: 1.1 !important; }
+
+  /* Narrowing POS cart panel */
+  .lg\:w-\[400px\] {
+    width: 280px !important;
+    min-width: 280px !important;
+  }
+
+  /* Universal grid reflow for stat cards and reports */
+  .grid.lg\:grid-cols-5, .grid.lg\:grid-cols-4, 
+  .grid.lg\:grid-cols-3, .grid.xl\:grid-cols-4 {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
+    gap: 0.5rem !important;
+  }
+
+  /* Reduce padding to maximize vertical space */
+  main.md\:p-8 { padding: 0.75rem !important; }
+  .p-4.md\:p-6, .p-6 { padding: 1rem !important; }
+  
+  /* Tables: High density mode */
+  table th, table td { padding: 0.5rem 0.25rem !important; }
+  table th { font-size: 0.65rem !important; }
+  table td { font-size: 0.75rem !important; }
+
+  /* Charts height optimization */
+  .h-72 { height: 220px !important; }
+}
+
+/* 4. Large Desktop (> 1400px) */
+@media (min-width: 1400px) {
+  :root { font-size: 16px; }
+}
+
+/* --- Global Functional Overrides --- */
+
+/* Helper for ensuring brand text doesn't wrap awkwardly in small sidebar widths */
+aside h1 {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Universal Button Scaling for header density */
+@media (max-width: 1366px) {
+  .px-4.py-2 {
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+    padding-top: 0.4rem !important;
+    padding-bottom: 0.4rem !important;
+    font-size: 0.85rem !important;
+  }
+}
+
+/* Custom grid responsive rule for Customer cards */
+@media (min-width: 640px) and (max-width: 1024px) {
+  .customer-cards-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}

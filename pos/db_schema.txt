@@ -1,0 +1,471 @@
+﻿Connected to database.
+
+Table: BankAccountRegistration
+--------------------
+  - ID (TypeEnum: 3)
+  - AccountNo (TypeEnum: 5)
+  - AccountName (TypeEnum: 130)
+  - AccountType (TypeEnum: 130)
+  - OpeningDate (TypeEnum: 7)
+  - BalanceAmount (TypeEnum: 130)
+  - Active (TypeEnum: 130)
+  - BranchID (TypeEnum: 130)
+  - BankAcct (TypeEnum: 130)
+  - BankName (TypeEnum: 130)
+  - BranchName (TypeEnum: 130)
+  - ContactNo (TypeEnum: 130)
+  - Address (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+
+Table: BankTrans
+--------------------
+  - ID (TypeEnum: 3)
+  - Description (TypeEnum: 130)
+  - Debit (TypeEnum: 130)
+  - Credit (TypeEnum: 130)
+  - BankName (TypeEnum: 130)
+  - Dates (TypeEnum: 7)
+  - Balance (TypeEnum: 130)
+  - Waybill (TypeEnum: 130)
+  - ChequeNo (TypeEnum: 130)
+  - AccountType (TypeEnum: 130)
+  - Crdr (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+
+Table: Barcodes
+--------------------
+  - ID (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 130)
+  - Loc (TypeEnum: 130)
+  - Photo (TypeEnum: 128)
+
+Table: CashBook
+--------------------
+  - ID (TypeEnum: 3)
+  - Dates (TypeEnum: 7)
+  - Description (TypeEnum: 130)
+  - Debit (TypeEnum: 130)
+  - Credit (TypeEnum: 130)
+  - Balance (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+  - InvoiceNo (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+
+Table: CashInvoice
+--------------------
+  - ID (TypeEnum: 3)
+  - Dat (TypeEnum: 7)
+  - Receivedfrom (TypeEnum: 130)
+  - Description (TypeEnum: 130)
+  - Amount (TypeEnum: 130)
+  - AmtWord (TypeEnum: 130)
+  - Cashier (TypeEnum: 130)
+
+Table: Categories
+--------------------
+  - Category (TypeEnum: 130)
+
+Table: CreditRec
+--------------------
+  - Nm (TypeEnum: 130)
+  - Total (TypeEnum: 130)
+
+Table: CustomerHistory
+--------------------
+  - ID (TypeEnum: 3)
+  - CustomerID (TypeEnum: 130)
+  - CustName (TypeEnum: 130)
+  - Dates (TypeEnum: 7)
+  - Debit (TypeEnum: 130)
+  - Credit (TypeEnum: 130)
+  - Balance (TypeEnum: 130)
+  - Descriptions (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+  - ReceiptNo (TypeEnum: 3)
+  - InvoiceNo (TypeEnum: 3)
+  - Crdr (TypeEnum: 130)
+  - Mode (TypeEnum: 130)
+  - Phone (TypeEnum: 130)
+
+Table: Customers
+--------------------
+  - CustID (TypeEnum: 3)
+  - ID (TypeEnum: 130)
+  - CustName (TypeEnum: 130)
+  - Phone (TypeEnum: 130)
+  - Address (TypeEnum: 130)
+  - Balance (TypeEnum: 130)
+  - CreditLimit (TypeEnum: 130)
+  - Status (TypeEnum: 130)
+
+Table: Droped
+--------------------
+  - ID (TypeEnum: 3)
+  - ReceiptDate (TypeEnum: 130)
+  - ReceiptTotal (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+  - Tym (TypeEnum: 130)
+  - Customer (TypeEnum: 130)
+
+Table: DropItem
+--------------------
+  - ID (TypeEnum: 3)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 130)
+  - Counts (TypeEnum: 5)
+  - Tprice (TypeEnum: 130)
+  - QtyBal (TypeEnum: 5)
+  - ReceiptDate (TypeEnum: 7)
+  - Category (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - Store (TypeEnum: 130)
+
+Table: Expense
+--------------------
+  - ID (TypeEnum: 3)
+  - Dates (TypeEnum: 7)
+  - Details (TypeEnum: 130)
+  - Amount (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+  - FileName (TypeEnum: 130)
+  - AcctName (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+  - Shift (TypeEnum: 130)
+
+Table: InOut
+--------------------
+  - ID (TypeEnum: 3)
+  - Dates (TypeEnum: 7)
+  - Description (TypeEnum: 130)
+  - Debit (TypeEnum: 130)
+  - Credit (TypeEnum: 130)
+  - Balance (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+  - Shift (TypeEnum: 130)
+
+Table: ItemHistory
+--------------------
+  - ID (TypeEnum: 3)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - SellPrice (TypeEnum: 130)
+  - Quantity (TypeEnum: 3)
+  - Balance (TypeEnum: 3)
+  - SDate (TypeEnum: 7)
+  - QtyOut (TypeEnum: 3)
+  - DateOut (TypeEnum: 7)
+  - Returns (TypeEnum: 3)
+  - Location (TypeEnum: 130)
+  - InvoiceNo (TypeEnum: 3)
+  - Description (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+
+Table: Items
+--------------------
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - Wholesale (TypeEnum: 130)
+  - SellPrice (TypeEnum: 130)
+  - Quantity (TypeEnum: 5)
+  - Dept (TypeEnum: 130)
+  - Category (TypeEnum: 130)
+  - Dates (TypeEnum: 7)
+  - MinQty (TypeEnum: 3)
+  - Brand (TypeEnum: 130)
+  - UnitWeight (TypeEnum: 3)
+  - UoM (TypeEnum: 130)
+  - UnitPack (TypeEnum: 130)
+  - SupplierName (TypeEnum: 130)
+  - SupplyDate (TypeEnum: 7)
+  - ItemLoc (TypeEnum: 130)
+  - Photo (TypeEnum: 128)
+
+Table: ItemsInOut
+--------------------
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - QtyIn (TypeEnum: 5)
+  - QtyOut (TypeEnum: 5)
+  - TDate (TypeEnum: 7)
+
+Table: Payments
+--------------------
+  - ID (TypeEnum: 3)
+  - ReceiptID (TypeEnum: 3)
+  - Dates (TypeEnum: 7)
+  - Change (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+  - Amounts (TypeEnum: 130)
+  - Total (TypeEnum: 130)
+  - Customer (TypeEnum: 130)
+
+Table: Purchased
+--------------------
+  - ID (TypeEnum: 3)
+  - InvNo (TypeEnum: 130)
+  - SDate (TypeEnum: 7)
+  - Supplier (TypeEnum: 130)
+  - Total (TypeEnum: 130)
+  - Paid (TypeEnum: 130)
+  - Balance (TypeEnum: 130)
+  - Status (TypeEnum: 130)
+
+Table: PurchaseInvoice
+--------------------
+  - ID (TypeEnum: 3)
+  - InvNo (TypeEnum: 130)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - SellPrice (TypeEnum: 130)
+  - Quantity (TypeEnum: 3)
+  - SDate (TypeEnum: 7)
+  - Total (TypeEnum: 130)
+  - Sell (TypeEnum: 130)
+  - Profit (TypeEnum: 130)
+
+Table: ReceiptDet
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 3)
+  - Counts (TypeEnum: 3)
+  - TPrice (TypeEnum: 3)
+
+Table: ReceiptDetails
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 130)
+  - Counts (TypeEnum: 5)
+  - Tprice (TypeEnum: 130)
+  - UOM (TypeEnum: 130)
+  - ReceiptDate (TypeEnum: 7)
+  - Category (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - Profit (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+  - Customer (TypeEnum: 130)
+  - Store (TypeEnum: 130)
+  - Discount (TypeEnum: 130)
+  - Brand (TypeEnum: 130)
+  - Unitpack (TypeEnum: 130)
+  - Unit (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+
+Table: Receipts
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - ReceiptDate (TypeEnum: 7)
+  - ReceiptTotal (TypeEnum: 130)
+  - Change (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+  - Amounts (TypeEnum: 130)
+  - Tym (TypeEnum: 130)
+  - Customer (TypeEnum: 130)
+  - Pay (TypeEnum: 130)
+  - CustomerID (TypeEnum: 130)
+  - GSM (TypeEnum: 130)
+  - Age (TypeEnum: 130)
+  - Address (TypeEnum: 130)
+  - Gender (TypeEnum: 130)
+  - Email (TypeEnum: 130)
+  - AmtWord (TypeEnum: 130)
+  - Refferals (TypeEnum: 130)
+  - Aged (TypeEnum: 130)
+  - Mode (TypeEnum: 130)
+  - Status (TypeEnum: 130)
+  - Sent (TypeEnum: 130)
+  - Discount (TypeEnum: 130)
+  - LessAmount (TypeEnum: 130)
+  - Cash (TypeEnum: 130)
+  - Pos (TypeEnum: 130)
+  - Transfer (TypeEnum: 130)
+  - Credit (TypeEnum: 130)
+  - Shift (TypeEnum: 130)
+  - ItemNames (TypeEnum: 130)
+
+Table: Refund
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - RefundDate (TypeEnum: 130)
+  - RefundTotal (TypeEnum: 3)
+  - Username (TypeEnum: 130)
+
+Table: RefundDetails
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 3)
+  - Counts (TypeEnum: 3)
+  - Tprice (TypeEnum: 3)
+
+Table: SalesTot
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - ReceiptDate (TypeEnum: 130)
+  - ReceiptTotal (TypeEnum: 3)
+  - Dat1 (TypeEnum: 130)
+  - Dat2 (TypeEnum: 130)
+  - SalesT (TypeEnum: 3)
+  - SalesP (TypeEnum: 130)
+
+Table: Staffs
+--------------------
+  - StaffID (TypeEnum: 130)
+  - StaffName (TypeEnum: 130)
+  - Gender (TypeEnum: 130)
+  - Age (TypeEnum: 130)
+  - DateHired (TypeEnum: 130)
+  - GSM (TypeEnum: 130)
+  - Photo (TypeEnum: 128)
+  - Picloc (TypeEnum: 130)
+
+Table: StockOut
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - ReceiptDate (TypeEnum: 7)
+  - ReceiptTotal (TypeEnum: 130)
+  - Change (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+  - Amounts (TypeEnum: 130)
+  - Tym (TypeEnum: 130)
+  - Customer (TypeEnum: 130)
+  - Pay (TypeEnum: 130)
+  - CustomerID (TypeEnum: 130)
+  - GSM (TypeEnum: 130)
+  - Age (TypeEnum: 130)
+  - Address (TypeEnum: 130)
+  - Gender (TypeEnum: 130)
+  - Email (TypeEnum: 130)
+  - AmtWord (TypeEnum: 130)
+  - Refferals (TypeEnum: 130)
+  - Aged (TypeEnum: 130)
+  - Mode (TypeEnum: 130)
+  - Status (TypeEnum: 130)
+  - Sent (TypeEnum: 130)
+  - Discount (TypeEnum: 130)
+  - LessAmount (TypeEnum: 130)
+  - Cash (TypeEnum: 130)
+  - Pos (TypeEnum: 130)
+  - Transfer (TypeEnum: 130)
+  - Credit (TypeEnum: 130)
+  - Shift (TypeEnum: 130)
+  - ItemNames (TypeEnum: 130)
+
+Table: StockOutDetails
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 130)
+  - Counts (TypeEnum: 3)
+  - Tprice (TypeEnum: 130)
+  - UOM (TypeEnum: 130)
+  - ReceiptDate (TypeEnum: 7)
+  - Category (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - Profit (TypeEnum: 130)
+  - Dept (TypeEnum: 130)
+  - Customer (TypeEnum: 130)
+  - Store (TypeEnum: 130)
+  - Discount (TypeEnum: 130)
+  - Brand (TypeEnum: 130)
+  - Unitpack (TypeEnum: 130)
+  - Unit (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+
+Table: Stocks
+--------------------
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - SellPrice (TypeEnum: 130)
+  - Quantity (TypeEnum: 3)
+  - Dept (TypeEnum: 130)
+  - Category (TypeEnum: 130)
+  - Dates (TypeEnum: 7)
+  - MinQty (TypeEnum: 3)
+  - Brand (TypeEnum: 130)
+  - UnitWeight (TypeEnum: 3)
+  - UoM (TypeEnum: 130)
+  - UnitPack (TypeEnum: 130)
+  - SupplierName (TypeEnum: 130)
+  - SupplyDate (TypeEnum: 7)
+  - ItemLoc (TypeEnum: 130)
+
+Table: StocksHistory
+--------------------
+  - ID (TypeEnum: 3)
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - BuyPrice (TypeEnum: 130)
+  - SellPrice (TypeEnum: 130)
+  - Quantity (TypeEnum: 3)
+  - Balance (TypeEnum: 3)
+  - SDate (TypeEnum: 7)
+  - QtyOut (TypeEnum: 3)
+  - DateOut (TypeEnum: 7)
+  - Returns (TypeEnum: 3)
+  - Location (TypeEnum: 130)
+  - InvoiceNo (TypeEnum: 3)
+  - Description (TypeEnum: 130)
+  - Username (TypeEnum: 130)
+
+Table: StocksInOut
+--------------------
+  - Barcode (TypeEnum: 130)
+  - ItemName (TypeEnum: 130)
+  - QtyIn (TypeEnum: 5)
+  - QtyOut (TypeEnum: 5)
+  - TDate (TypeEnum: 7)
+
+Table: Stores
+--------------------
+  - Dept (TypeEnum: 130)
+
+Table: Supplier
+--------------------
+  - ID (TypeEnum: 3)
+  - CompanyName (TypeEnum: 130)
+  - ContactName (TypeEnum: 130)
+  - Address (TypeEnum: 130)
+  - Phone (TypeEnum: 130)
+
+Table: Temps
+--------------------
+  - ReceiptID (TypeEnum: 3)
+  - ItemName (TypeEnum: 130)
+  - Price (TypeEnum: 130)
+  - Counts (TypeEnum: 3)
+  - TPrice (TypeEnum: 130)
+
+Table: TotalTemp
+--------------------
+  - Dat1 (TypeEnum: 130)
+  - Dat2 (TypeEnum: 130)
+  - Total (TypeEnum: 130)
+
+Table: Users
+--------------------
+  - UserName (TypeEnum: 130)
+  - UserPassword (TypeEnum: 130)
+  - Role (TypeEnum: 130)
+  - FirstName (TypeEnum: 130)
+  - LastName (TypeEnum: 130)
+  - PhoneNo (TypeEnum: 130)
+  - Address (TypeEnum: 130)
+  - Gender (TypeEnum: 130)
+  - Photo (TypeEnum: 128)
+
+Table: Values
+--------------------
+  - Key (TypeEnum: 130)
+  - Val (TypeEnum: 130)

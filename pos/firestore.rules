@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper to identify the authenticated store POS machine
+    function isStoreAccount() {
+      return request.auth != null && request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com';
+    }
+
+    // Products Catalog - publicly readable, writable only by store POS
+    match /products/{product} {
+      allow read: if true;
+      allow write: if isStoreAccount();
+    }
+
+    // Ecommerce Orders - publicly checkable (creation), readable by buyer and store POS
+    match /orders/{order} {
+      allow create: if true;
+      allow read, update: if isStoreAccount() || (request.auth != null && resource.data.userId == request.auth.uid);
+      allow delete: if isStoreAccount();
+    }
+
+    // All private POS data (sales, expenses, customer info, suppliers, users, cashBook, etc.)
+    match /customers/{doc} { allow read, write: if isStoreAccount(); }
+    match /customerPayments/{doc} { allow read, write: if isStoreAccount(); }
+    match /sales/{doc} { allow read, write: if isStoreAccount(); }
+    match /expenses/{doc} { allow read, write: if isStoreAccount(); }
+    match /users/{doc} { allow read, write: if isStoreAccount(); }
+    match /returns/{doc} { allow read, write: if isStoreAccount(); }
+    match /returnedItems/{doc} { allow read, write: if isStoreAccount(); }
+    match /suppliers/{doc} { allow read, write: if isStoreAccount(); }
+    match /purchases/{doc} { allow read, write: if isStoreAccount(); }
+    match /departments/{doc} { allow read, write: if isStoreAccount(); }
+    match /bankAccounts/{doc} { allow read, write: if isStoreAccount(); }
+    match /cashBook/{doc} { allow read, write: if isStoreAccount(); }
+    match /supplierPayments/{doc} { allow read, write: if isStoreAccount(); }
+    match /auditLogs/{doc} { allow read, write: if isStoreAccount(); }
+
+    // Ecommerce Customer Profiles - each customer can only access their own profile
+    match /shopUsers/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isStoreAccount();
+    }
+  }
+}
