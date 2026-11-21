@@ -7,6 +7,8 @@ interface DashboardMetricsProps {
 }
 
 export function DashboardMetrics({ stats, isAdmin }: DashboardMetricsProps) {
+    const remainingToday = (stats.todaySales || 0) - (stats.todayExpenses || 0) - (stats.totalRefundAmountToday || 0);
+
     return (
         <>
             {/* SECTION 1: Daily Pulse */}
@@ -15,11 +17,13 @@ export function DashboardMetrics({ stats, isAdmin }: DashboardMetricsProps) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
                     <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center bg-gradient-to-br from-emerald-50 to-white">
                         <div>
-                            <p className="text-xs md:text-sm font-medium text-slate-500">Net Sales (Today)</p>
-                            <h3 className="text-xl md:text-2xl font-bold text-emerald-700">₦{(stats.netSalesToday || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-                            <div className="flex items-center gap-1 text-[10px] md:text-xs text-emerald-600 mt-1">
-                                <ArrowUpRight className="w-3 h-3" />
-                                <span>Actual Cash Flow</span>
+                            <p className="text-xs md:text-sm font-medium text-slate-500">Remaining Balance (Today)</p>
+                            <h3 className={`text-xl md:text-2xl font-bold ${remainingToday >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                                ₦{remainingToday.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </h3>
+                            <div className="flex items-center gap-1 text-[10px] md:text-xs text-slate-500 mt-1">
+                                <ArrowUpRight className="w-3 h-3 text-emerald-600" />
+                                <span>Sales − Expenses</span>
                             </div>
                         </div>
                         <div className="p-2 md:p-3 bg-emerald-100 rounded-full border border-emerald-200">

@@ -16,13 +16,12 @@ import LoginPage from './pages/LoginPage';
 import Orders from './pages/Orders';
 import { ToastProvider } from './contexts/ToastContext';
 import { DialogProvider } from './contexts/DialogContext';
-import { createAppDirectories } from './services/directoryService';
-import { startSyncService } from './services/syncService';
+import { ModalProvider } from './contexts/ModalContext';
+import { CartProvider } from './contexts/CartContext';
 import { SyncProvider } from './contexts/SyncContext';
-import OfflineIndicator from './components/OfflineIndicator';
-import { initNetworkManager } from './utils/networkManager';
-import { runSync } from './utils/syncManager';
-import { db as firestoreDb } from './firebase/config';
+import { OnlineOrdersProvider } from './contexts/OnlineOrdersContext';
+import { createAppDirectories } from './services/directoryService';
+import { UserRole } from './types';
 
 // Top-level function for one-time application initialization
 const initializeAppServices = async () => {
@@ -39,13 +38,7 @@ const initializeAppServices = async () => {
   }
 
   await createAppDirectories();
-  initNetworkManager(firestoreDb, () => {
-    runSync();
-  });
 };
-
-
-import { UserRole } from './types';
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles: UserRole[] }) {
   const { currentUser } = useAuth();
@@ -62,10 +55,6 @@ const ALL_ROLES = [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.CASHIER];
 
 function AppRoutes() {
   const { currentUser } = useAuth();
-  
-  useEffect(() => {
-    startSyncService();
-  }, []);
 
   if (!currentUser) {
     return (
@@ -91,7 +80,7 @@ function AppRoutes() {
         <Route path="/purchases" element={<ProtectedRoute roles={ADMIN_ROLES}><Purchases /></ProtectedRoute>} />
         <Route path="/expenses" element={<ProtectedRoute roles={ADMIN_ROLES}><Expenses /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute roles={ADMIN_ROLES}><Reports /></ProtectedRoute>} />
-        <Route path="/returns" element={<ProtectedRoute roles={ADMIN_ROLES}><Returns /></ProtectedRoute>} />
+        <Route path="/returns" element={<ProtectedRoute roles={[...ADMIN_ROLES, UserRole.CASHIER]}><Returns /></ProtectedRoute>} />
         
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
@@ -100,22 +89,39 @@ function AppRoutes() {
 }
 
 function App() {
+  const [servicesReady, setServicesReady] = React.useState(false);
+
   useEffect(() => {
-    initializeAppServices();
+    initializeAppServices()
+      .then(() => setServicesReady(true))
+      .catch((err) => {
+        console.error('[App] initializeAppServices failed:', err);
+        // Still mount the app so the user isn't stuck on a blank screen
+        setServicesReady(true);
+      });
   }, []);
+
+  if (!servicesReady) {
+    return null; // Don't mount AppRoutes until initialization completes
+  }
 
   return (
     <>
       <Router>
         <AuthProvider>
-          <ToastProvider>
-            <DialogProvider>
-              <SyncProvider>
-                <AppRoutes />
-                <OfflineIndicator />
-              </SyncProvider>
-            </DialogProvider>
-          </ToastProvider>
+          <ModalProvider>
+            <ToastProvider>
+              <DialogProvider>
+                <CartProvider>
+                  <SyncProvider>
+                    <OnlineOrdersProvider>
+                      <AppRoutes />
+                    </OnlineOrdersProvider>
+                  </SyncProvider>
+                </CartProvider>
+              </DialogProvider>
+            </ToastProvider>
+          </ModalProvider>
         </AuthProvider>
       </Router>
     </>

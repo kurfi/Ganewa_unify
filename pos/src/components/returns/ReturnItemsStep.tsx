@@ -31,7 +31,7 @@ export function ReturnItemsStep({
 
         const saleItem = originalSale.items.find(i => i.productId === productId);
         const alreadyReturned = saleItem?.returnedQuantity || 0;
-        const maxAvailableToReturn = (saleItem?.quantity || 0) - alreadyReturned;
+        const maxAvailableToReturn = Math.max(0, (saleItem?.quantity || 0) - alreadyReturned);
 
         if (quantity > maxAvailableToReturn) {
             showToast(`Cannot return more than available (${maxAvailableToReturn})`, 'error');
@@ -72,30 +72,35 @@ export function ReturnItemsStep({
 
             {/* Returnable Items Table */}
             <div className="overflow-x-auto overflow-y-hidden mb-4 md:mb-6">
-                <table className="min-w-full divide-y divide-slate-200 text-xs md:text-sm">
+                <table className="min-w-full divide-y divide-slate-200 text-xs md:text-sm text-slate-800">
                     <thead className="bg-slate-50 hidden md:table-header-group">
                         <tr>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Product</th>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Max</th>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Price</th>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Qty</th>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Refund</th>
-                            <th className="px-3 py-2 text-left font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Product</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Max</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Price</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Qty</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Status</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Refund</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600 uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-slate-200">
+                    <tbody className="bg-white divide-y divide-slate-200 text-slate-800">
                         {returnableItems.map((item) => {
                             const originalSoldItem = originalSale.items.find(saleItem => saleItem.productId === item.productId);
                             const alreadyReturned = originalSoldItem?.returnedQuantity || 0;
-                            const maxReturnable = item.quantity - alreadyReturned;
+                            const maxReturnable = Math.max(0, item.quantity - alreadyReturned);
+                            const displayName = item.productName || (item as any).name || 'Unknown Product';
                             return (
                                 <React.Fragment key={item.productId}>
                                     {/* Desktop Row */}
-                                    <tr className="hidden md:table-row">
-                                        <td className="px-3 py-2 whitespace-nowrap">{item.productName}</td>
-                                        <td className="px-3 py-2 whitespace-nowrap">{maxReturnable}</td>
-                                        <td className="px-3 py-2 whitespace-nowrap">₦{(item.price || 0).toLocaleString()}</td>
+                                    <tr className="hidden md:table-row hover:bg-slate-50/75">
+                                        <td className="px-3 py-2 text-slate-800 font-medium">
+                                            <span className="font-semibold text-slate-800 block text-xs md:text-sm" title={displayName}>
+                                                {displayName}
+                                            </span>
+                                        </td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700 font-medium">{maxReturnable}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700 font-medium">₦{(item.price || 0).toLocaleString()}</td>
                                         <td className="px-3 py-2 whitespace-nowrap">
                                             <input
                                                 type="number"
@@ -109,7 +114,7 @@ export function ReturnItemsStep({
                                                         originalSoldItem || item
                                                     )
                                                 }
-                                                className="w-16 border border-slate-300 rounded-md p-1 text-center"
+                                                className="w-16 border border-slate-300 rounded-md p-1 text-center text-slate-900 bg-white"
                                             />
                                         </td>
                                         <td className="px-3 py-2 whitespace-nowrap">
@@ -121,7 +126,7 @@ export function ReturnItemsStep({
                                                         e.target.value as 'restocked' | 'damaged'
                                                     )
                                                 }
-                                                className="border border-slate-300 rounded-md p-1 bg-white"
+                                                className="border border-slate-300 rounded-md p-1 bg-white text-slate-900"
                                             >
                                                 <option value="restocked">Restock</option>
                                                 <option value="damaged">Damaged</option>
@@ -146,7 +151,7 @@ export function ReturnItemsStep({
                                         <td colSpan={7} className="px-0 py-3">
                                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
                                                 <div className="flex justify-between items-start gap-2">
-                                                    <span className="font-bold text-slate-800 text-sm">{item.productName}</span>
+                                                    <span className="font-bold text-slate-800 text-sm">{displayName}</span>
                                                     <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded shrink-0">
                                                         ₦{(item.price || 0).toLocaleString()}
                                                     </span>

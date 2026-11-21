@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Users, Plus, X, Edit, Trash2 } from 'lucide-react';
-import { db, logAudit } from '../../db/db';
+import { usersRepo } from '../../repositories';
+import { useCollection, logAudit } from '../../firebase/firestoreHelpers';
 import { User, UserRole } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -10,11 +10,10 @@ import { validateInventoryField } from '../../utils/validation';
 
 export function UserManagement() {
     const { currentUser } = useAuth();
-    const dbUsers = useLiveQuery(() => db.users.toArray());
+    const { data: dbUsers } = useCollection<User>('users');
     const { showToast } = useToast();
     const { confirm } = useDialog();
 
-    // 2. Filter Users based on role
     const allUsers = dbUsers ? [...dbUsers] : [];
 
     const filteredUsers = allUsers.filter(u => {
@@ -42,6 +41,8 @@ export function UserManagement() {
 
     const [addUserForm, setAddUserForm] = useState({ username: '', password: '', confirmPassword: '', role: UserRole.CASHIER, error: '' });
     const [editUserForm, setEditUserForm] = useState({ id: '', role: UserRole.CASHIER, password: '', confirmPassword: '', error: '' });
+    const [isAddingUser, setIsAddingUser] = useState(false);
+    const [isEditingUserSubmitting, setIsEditingUserSubmitting] = useState(false);
 
     const handleOpenAddModal = () => {
         setAddUserForm({ username: '', password: '', confirmPassword: '', role: UserRole.CASHIER, error: '' });
@@ -56,6 +57,8 @@ export function UserManagement() {
 
     const handleAddUser = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isAddingUser) return;
+
         const { username, password, confirmPassword, role } = addUserForm;
 
         if (!validateInventoryField(username, 'Username', showToast)) {
@@ -72,22 +75,21 @@ export function UserManagement() {
             return;
         }
 
-        const existingUser = await db.users.where('username').equalsIgnoreCase(username).first();
+        const existingUser = allUsers.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
         if (existingUser) {
             setAddUserForm(prev => ({ ...prev, error: 'Username already exists.' }));
             return;
         }
 
+        setIsAddingUser(true);
         try {
-            const newUser: User = {
+            const newUser: Omit<User, 'id' | 'deleted' | 'created_at' | 'updated_at'> = {
                 username: username.trim(),
-                password, // Stored for local auth check
+                password,
                 role,
-                updated_at: new Date().toISOString(),
-                created_at: new Date().toISOString()
             };
 
-            await db.users.add(newUser);
+            await usersRepo.create(newUser);
             
             await logAudit(
                 'USER_CREATED',
@@ -100,11 +102,15 @@ export function UserManagement() {
         } catch (error: any) {
             console.error("Failed to add user:", error);
             setAddUserForm(prev => ({ ...prev, error: 'Failed to add user.' }));
+        } finally {
+            setIsAddingUser(false);
         }
     };
 
     const handleUpdateUser = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isEditingUserSubmitting) return;
+
         const { id, role, password, confirmPassword } = editUserForm;
 
         if (password && password.length < 4) {
@@ -117,17 +123,17 @@ export function UserManagement() {
             return;
         }
 
+        setIsEditingUserSubmitting(true);
         try {
             const updates: Partial<User> = { 
                 role,
-                updated_at: new Date().toISOString()
             };
             
             if (password) {
                 updates.password = password;
             }
             
-            await db.users.update(id, updates);
+            await usersRepo.update(id, updates);
             
             await logAudit(
                 'USER_UPDATED',
@@ -141,6 +147,8 @@ export function UserManagement() {
             console.error("Failed to update user:", error);
             setEditUserForm(prev => ({ ...prev, error: 'Failed to update user.' }));
             showToast("Failed to update user.", 'error');
+        } finally {
+            setIsEditingUserSubmitting(false);
         }
     };
 
@@ -151,7 +159,7 @@ export function UserManagement() {
         }
         if (await confirm("Are you sure you want to delete this user? This action cannot be undone.", { type: 'warning', confirmText: 'Delete User' })) {
             try {
-                await db.users.delete(userId);
+                await usersRepo.delete(userId);
                 await logAudit(
                     'USER_DELETED',
                     `User deleted with ID: ${userId}`,
@@ -300,8 +308,10 @@ export function UserManagement() {
                             </div>
                             {addUserForm.error && <p className="text-xs text-red-600 bg-red-50 p-3 rounded-lg border border-red-100">{addUserForm.error}</p>}
                             <div className="flex justify-end gap-3 pt-4">
-                                <button type="button" onClick={() => setIsAddUserModalOpen(false)} className="px-4 py-2 rounded-lg text-xs md:text-sm text-slate-600 hover:bg-slate-100">Cancel</button>
-                                <button type="submit" className="px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-xs md:text-sm font-bold">Save User</button>
+                                <button type="button" onClick={() => setIsAddUserModalOpen(false)} disabled={isAddingUser} className="px-4 py-2 rounded-lg text-xs md:text-sm text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+                                <button type="submit" disabled={isAddingUser} className="px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-xs md:text-sm font-bold disabled:opacity-50">
+                                    {isAddingUser ? 'Saving...' : 'Save User'}
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -338,8 +348,10 @@ export function UserManagement() {
                             </div>
                             {editUserForm.error && <p className="text-xs text-red-600 bg-red-50 p-3 rounded-lg border border-red-100">{editUserForm.error}</p>}
                             <div className="flex justify-end gap-3 pt-4">
-                                <button type="button" onClick={() => setIsEditUserModalOpen(false)} className="px-4 py-2 rounded-lg text-xs md:text-sm text-slate-600 hover:bg-slate-100">Cancel</button>
-                                <button type="submit" className="px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-xs md:text-sm font-bold">Update User</button>
+                                <button type="button" onClick={() => setIsEditUserModalOpen(false)} disabled={isEditingUserSubmitting} className="px-4 py-2 rounded-lg text-xs md:text-sm text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+                                <button type="submit" disabled={isEditingUserSubmitting} className="px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-xs md:text-sm font-bold disabled:opacity-50">
+                                    {isEditingUserSubmitting ? 'Updating...' : 'Update User'}
+                                </button>
                             </div>
                         </form>
                     </div>

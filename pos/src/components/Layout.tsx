@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Menu, X } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { BottomNav } from './BottomNav';
+import { useGlobalBarcodeScanner } from '../hooks/useGlobalBarcodeScanner';
+import { useCart } from '../hooks/useCart';
+import { useCollection } from '../firebase/firestoreHelpers';
+import { Product } from '../types';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -9,6 +13,23 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Fetch ALL products (includeDeleted=true) and filter client-side, the same way
+  // POS.tsx does it. This prevents the Firestore `deleted == false` constraint from
+  // excluding products that simply don't have a `deleted` field stored.
+  const { data: allProducts } = useCollection<Product>('products', [], true);
+  const products = useMemo(
+    () => allProducts.filter((p) => !p.deleted && !!(p.name || '').trim()),
+    [allProducts]
+  );
+
+  const { addToCart } = useCart();
+
+  // App-wide barcode scanner listener mounted once for the entire session
+  useGlobalBarcodeScanner({
+    products,
+    addToCart,
+  });
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden flex-col md:flex-row">

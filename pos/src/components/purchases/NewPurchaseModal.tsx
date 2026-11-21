@@ -1,11 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useToast } from '../../contexts/ToastContext';
-import { db } from '../../db/db';
-import { Purchase, PurchaseItem, Supplier, Product } from '../../types';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { Plus, X, Save, Trash2 } from 'lucide-react';
+import { useCollection, normalizeFirestoreDates } from '../../firebase/firestoreHelpers';
+import { db } from '../../firebase/config';
+import { runTransaction, doc } from 'firebase/firestore';
+import { Purchase, PurchaseItem, Supplier, Product, PaymentMethod } from '../../types';
+import { Plus, X, Save, Trash2, Banknote, ArrowLeftRight } from 'lucide-react';
 import { format } from 'date-fns';
 import { validateNumericField } from '../../utils/validation';
+import { v4 as uuidv4 } from 'uuid';
+import { emitDashboardRefresh } from '../../utils/dashboardRefreshSignal';
+import { computeBalances } from '../../utils/computeBalances';
+import { roundTo2 } from '../../utils/math';
+
+type PaymentMode = 'CASH' | 'TRANSFER' | 'MIX';
 
 interface NewPurchaseModalProps {
     isOpen: boolean;
@@ -18,32 +25,78 @@ export function NewPurchaseModal({ isOpen, onClose }: NewPurchaseModalProps) {
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
     const [purchaseDate, setPurchaseDate] = useState(format(new Date(), 'yyyy-MM-dd'));
     const [cartPoints, setCartPoints] = useState<PurchaseItem[]>([]);
-    const [paidAmount, setPaidAmount] = useState<number>(0);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // --- Payment state ---
+    const [paymentMode, setPaymentMode] = useState<PaymentMode>('CASH');
+    // Single-method fields
+    const [paidAmount, setPaidAmount] = useState<number>(0);
+    // Mix-method fields
+    const [cashAmount, setCashAmount] = useState<number>(0);
+    const [transferAmount, setTransferAmount] = useState<number>(0);
+
+    // --- Add product state ---
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
     const [itemQuantity, setItemQuantity] = useState<number>(1);
     const [itemCost, setItemCost] = useState<number>(0);
     const [itemPrice, setItemPrice] = useState<number>(0);
     const [productSearch, setProductSearch] = useState('');
 
-    const suppliers = useLiveQuery(() => db.suppliers.toArray(), [isOpen]) || [];
-    const products = useLiveQuery(async () => {
-        if (!isOpen || !productSearch) return [];
-        return db.products.where('name').startsWithIgnoreCase(productSearch).limit(10).toArray();
-    }, [productSearch, isOpen]);
+    const { data: rawSuppliers } = useCollection<Supplier>('suppliers');
+    const { data: rawProducts } = useCollection<Product>('products');
 
-    // Auto-generate invoice number when modal opens
+    const suppliers = useMemo(() => rawSuppliers.filter(s => !s.deleted), [rawSuppliers]);
+
+    const matchingProducts = useMemo(() => {
+        if (!productSearch) return [];
+        const term = productSearch.toLowerCase();
+        return rawProducts
+            .filter(p => !p.deleted && (p.name || '').toLowerCase().includes(term))
+            .slice(0, 10);
+    }, [rawProducts, productSearch]);
+
+    // Auto-generate invoice number and prefetch balances when modal opens
+    const [cachedBalances, setCachedBalances] = useState<{ cashAtHand: number; moneyInBank: number } | null>(null);
+
     React.useEffect(() => {
-        if (isOpen && !invoiceNo) {
-            const now = new Date();
-            const timestamp = format(now, 'yyyyMMdd-HHmmss');
-            setInvoiceNo(`PUR-${timestamp}`);
+        if (isOpen) {
+            if (!invoiceNo) {
+                const now = new Date();
+                const timestamp = format(now, 'yyyyMMdd-HHmmss');
+                setInvoiceNo(`PUR-${timestamp}`);
+            }
+            // Pre-fetch balances in background so liquidity check is instantaneous upon save
+            computeBalances().then(setCachedBalances).catch(() => {});
         }
     }, [isOpen, invoiceNo]);
 
+    // Reset all state when modal closes
+    const handleClose = () => {
+        setInvoiceNo('');
+        setSelectedSupplier(null);
+        setPurchaseDate(format(new Date(), 'yyyy-MM-dd'));
+        setCartPoints([]);
+        setPaymentMode('CASH');
+        setPaidAmount(0);
+        setCashAmount(0);
+        setTransferAmount(0);
+        setSelectedProduct(null);
+        setItemQuantity(1);
+        setItemCost(0);
+        setItemPrice(0);
+        setProductSearch('');
+        onClose();
+    };
+
+    const calculateTotal = () => cartPoints.reduce((sum, item) => sum + item.total, 0);
+
+    // How much is actually being paid (resolved from payment mode)
+    const resolvedPaidAmount = paymentMode === 'MIX'
+        ? roundTo2(cashAmount + transferAmount)
+        : paidAmount;
+
     const handleAddItem = () => {
         if (!selectedProduct) return;
-
         if (!validateNumericField(itemQuantity, 'Quantity', 1, showToast)) return;
         if (!validateNumericField(itemCost, 'Cost Price', 0, showToast)) return;
         if (!validateNumericField(itemPrice, 'Selling Price', 0, showToast)) return;
@@ -65,74 +118,257 @@ export function NewPurchaseModal({ isOpen, onClose }: NewPurchaseModalProps) {
         setItemPrice(0);
     };
 
-    const calculateTotal = () => cartPoints.reduce((sum, item) => sum + item.total, 0);
-
     const handleSubmit = async () => {
+        if (isSubmitting) return;
+
         if (!selectedSupplier || cartPoints.length === 0) {
             showToast('Please select a supplier and add items.', 'error');
             return;
         }
 
+        const totalAmount = calculateTotal();
+        const paid = resolvedPaidAmount;
+
+        // Validate mix amounts
+        if (paymentMode === 'MIX') {
+            if (cashAmount < 0 || transferAmount < 0) {
+                showToast('Cash and Transfer amounts cannot be negative.', 'error');
+                return;
+            }
+            if (cashAmount === 0 && transferAmount === 0) {
+                showToast('Please enter cash and/or transfer amounts for mix payment.', 'error');
+                return;
+            }
+        }
+
+        if (paid < 0) {
+            showToast('Paid amount cannot be negative.', 'error');
+            return;
+        }
+
+        setIsSubmitting(true);
         try {
-            const totalAmount = calculateTotal();
-            const balance = totalAmount - paidAmount;
+            // --- Liquidity check (uses pre-fetched balance if available for 0ms delay) ---
+            if (paid > 0) {
+                try {
+                    const balances = cachedBalances || await computeBalances();
+                    if (balances) {
+                        if (paymentMode === 'CASH') {
+                            if (paid > balances.cashAtHand) {
+                                const shortfall = roundTo2(paid - balances.cashAtHand);
+                                showToast(
+                                    `Insufficient cash at hand. Available: ₦${balances.cashAtHand.toLocaleString(undefined, { minimumFractionDigits: 2 })} — Shortfall: ₦${shortfall.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                                    'error'
+                                );
+                                setIsSubmitting(false);
+                                return;
+                            }
+                        } else if (paymentMode === 'TRANSFER') {
+                            if (paid > balances.moneyInBank) {
+                                const shortfall = roundTo2(paid - balances.moneyInBank);
+                                showToast(
+                                    `Insufficient bank balance. Available: ₦${balances.moneyInBank.toLocaleString(undefined, { minimumFractionDigits: 2 })} — Shortfall: ₦${shortfall.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                                    'error'
+                                );
+                                setIsSubmitting(false);
+                                return;
+                            }
+                        } else if (paymentMode === 'MIX') {
+                            if (cashAmount > balances.cashAtHand) {
+                                const shortfall = roundTo2(cashAmount - balances.cashAtHand);
+                                showToast(
+                                    `Insufficient cash at hand for cash portion. Available: ₦${balances.cashAtHand.toLocaleString(undefined, { minimumFractionDigits: 2 })} — Shortfall: ₦${shortfall.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                                    'error'
+                                );
+                                setIsSubmitting(false);
+                                return;
+                            }
+                            if (transferAmount > balances.moneyInBank) {
+                                const shortfall = roundTo2(transferAmount - balances.moneyInBank);
+                                showToast(
+                                    `Insufficient bank balance for transfer portion. Available: ₦${balances.moneyInBank.toLocaleString(undefined, { minimumFractionDigits: 2 })} — Shortfall: ₦${shortfall.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                                    'error'
+                                );
+                                setIsSubmitting(false);
+                                return;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[NewPurchaseModal] Balance check failed, proceeding without check:', err);
+                }
+            }
+            const balance = roundTo2(totalAmount - paid);
+            const nowIso = new Date().toISOString();
+            const now = new Date(purchaseDate);
+            const purchaseId = uuidv4();
 
-            await db.transaction('rw', [db.purchases, db.products, db.suppliers, db.settings], async () => {
+            await runTransaction(db, async (tx) => {
+                // ── READ PHASE ──
+                const productSnaps = await Promise.all(
+                    cartPoints.map(item => tx.get(doc(db, 'products', item.productId)))
+                );
 
-                await db.purchases.add({
+                const supplierRef = doc(db, 'suppliers', selectedSupplier.id!);
+                const supplierSnap = await tx.get(supplierRef);
+
+                // ── WRITE PHASE ──
+
+                // 1. Create Purchase doc
+                const purchaseRef = doc(db, 'purchases', purchaseId);
+                const purchaseData: Omit<Purchase, 'id'> = {
                     invoiceNo,
                     supplierId: selectedSupplier.id!,
                     supplierName: selectedSupplier.companyName,
-                    date: new Date(purchaseDate),
+                    supplierNameLower: (selectedSupplier.companyName || '').toLowerCase(),
+                    invoiceNoLower: (invoiceNo || '').toLowerCase(),
+                    date: now,
                     items: cartPoints,
                     totalAmount,
-                    paidAmount,
-                    balance,
-                    status: balance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'PENDING'),
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString()
-                } as Purchase);
+                    paidAmount: paid,
+                    balance: Math.max(0, balance),
+                    status: balance <= 0 ? 'PAID' : (paid > 0 ? 'PARTIAL' : 'PENDING'),
+                    created_at: nowIso,
+                    updated_at: nowIso,
+                    deleted: false
+                };
+                tx.set(purchaseRef, purchaseData);
 
-                for (const item of cartPoints) {
-                    const product = await db.products.get(item.productId);
-                    if (product) {
-                        await db.products.update(item.productId, {
-                            quantity: product.quantity + item.quantity,
+                // 2. Update Products (restock)
+                for (let i = 0; i < cartPoints.length; i++) {
+                    const item = cartPoints[i];
+                    const snap = productSnaps[i];
+                    if (snap.exists()) {
+                        const pData = normalizeFirestoreDates<Product>(snap.data());
+                        const pRef = doc(db, 'products', item.productId);
+                        tx.update(pRef, {
+                            quantity: (pData.quantity || 0) + item.quantity,
                             buyPrice: item.costPrice,
                             sellPrice: item.sellingPrice,
-                            updated_at: new Date().toISOString()
+                            stockValue: ((pData.quantity || 0) + item.quantity) * item.costPrice,
+                            updated_at: nowIso
                         });
                     }
                 }
 
-                if (balance > 0) {
-                    const supplier = await db.suppliers.get(selectedSupplier.id!);
-                    if (supplier) {
-                        await db.suppliers.update(supplier.id!, {
-                            balance: (supplier.balance || 0) + balance,
-                            updated_at: new Date().toISOString()
+                // 3. Record supplierPayment(s) so cash/bank is properly debited
+                if (paid > 0) {
+                    if (paymentMode === 'CASH') {
+                        const spId = uuidv4();
+                        tx.set(doc(db, 'supplierPayments', spId), {
+                            id: spId,
+                            supplierId: selectedSupplier.id!,
+                            supplierName: selectedSupplier.companyName,
+                            purchaseId,
+                            date: now,
+                            amount: paid,
+                            paymentMethod: PaymentMethod.CASH,
+                            note: `Payment on purchase ${invoiceNo}`,
+                            created_at: nowIso,
+                            updated_at: nowIso,
+                            deleted: false
                         });
+                    } else if (paymentMode === 'TRANSFER') {
+                        const spId = uuidv4();
+                        tx.set(doc(db, 'supplierPayments', spId), {
+                            id: spId,
+                            supplierId: selectedSupplier.id!,
+                            supplierName: selectedSupplier.companyName,
+                            purchaseId,
+                            date: now,
+                            amount: paid,
+                            paymentMethod: PaymentMethod.TRANSFER,
+                            note: `Payment on purchase ${invoiceNo}`,
+                            created_at: nowIso,
+                            updated_at: nowIso,
+                            deleted: false
+                        });
+                    } else if (paymentMode === 'MIX') {
+                        // Two separate payment records — one per method
+                        if (cashAmount > 0) {
+                            const spCashId = uuidv4();
+                            tx.set(doc(db, 'supplierPayments', spCashId), {
+                                id: spCashId,
+                                supplierId: selectedSupplier.id!,
+                                supplierName: selectedSupplier.companyName,
+                                purchaseId,
+                                date: now,
+                                amount: cashAmount,
+                                paymentMethod: PaymentMethod.CASH,
+                                note: `Cash portion of mix payment on purchase ${invoiceNo}`,
+                                created_at: nowIso,
+                                updated_at: nowIso,
+                                deleted: false
+                            });
+                        }
+                        if (transferAmount > 0) {
+                            const spTransferId = uuidv4();
+                            tx.set(doc(db, 'supplierPayments', spTransferId), {
+                                id: spTransferId,
+                                supplierId: selectedSupplier.id!,
+                                supplierName: selectedSupplier.companyName,
+                                purchaseId,
+                                date: now,
+                                amount: transferAmount,
+                                paymentMethod: PaymentMethod.TRANSFER,
+                                note: `Transfer portion of mix payment on purchase ${invoiceNo}`,
+                                created_at: nowIso,
+                                updated_at: nowIso,
+                                deleted: false
+                            });
+                        }
                     }
+                }
+
+                // 4. Update Supplier balance
+                // balance > 0  → store owes supplier more → ADD to supplier.balance
+                // balance <= 0 → fully paid or overpaid  → SUBTRACT any excess from supplier.balance
+                if (supplierSnap.exists()) {
+                    const supData = normalizeFirestoreDates<Supplier>(supplierSnap.data());
+                    const currentSupplierBalance = supData.balance || 0;
+                    let newSupplierBalance: number;
+
+                    if (balance > 0) {
+                        // Partial / PENDING: add unpaid amount as new debt
+                        newSupplierBalance = roundTo2(currentSupplierBalance + balance);
+                    } else {
+                        // Fully paid or overpaid: reduce existing debt by any excess (|balance|)
+                        newSupplierBalance = roundTo2(Math.max(0, currentSupplierBalance + balance));
+                    }
+
+                    tx.update(supplierRef, {
+                        balance: newSupplierBalance,
+                        updated_at: nowIso
+                    });
                 }
             });
 
-            onClose();
+            emitDashboardRefresh();
+            showToast('Purchase order saved successfully.', 'success');
+            handleClose();
         } catch (error) {
             console.error('Failed to save purchase:', error);
             showToast('Failed to save purchase order.', 'error');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
     if (!isOpen) return null;
 
+    const total = calculateTotal();
+    const paid = resolvedPaidAmount;
+    const balanceDue = Math.max(0, total - paid);
+
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                {/* Header */}
                 <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
                     <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
                         <Plus className="w-5 h-5 text-emerald-600" /> New Purchase Order
                     </h2>
-                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold p-1 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+                    <button onClick={handleClose} className="text-slate-400 hover:text-slate-600 font-bold p-1 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5" /></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6">
@@ -189,10 +425,9 @@ export function NewPurchaseModal({ isOpen, onClose }: NewPurchaseModalProps) {
                                         if (selectedProduct) setSelectedProduct(null);
                                     }}
                                 />
-                                {/* Autocomplete Dropdown */}
-                                {productSearch && !selectedProduct && products && products.length > 0 && (
+                                {productSearch && !selectedProduct && matchingProducts.length > 0 && (
                                     <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 shadow-lg rounded-lg mt-1 z-20 max-h-48 overflow-y-auto">
-                                        {products.map(p => (
+                                        {matchingProducts.map(p => (
                                             <div
                                                 key={p.id}
                                                 className="p-2 hover:bg-slate-50 cursor-pointer text-sm"
@@ -287,38 +522,118 @@ export function NewPurchaseModal({ isOpen, onClose }: NewPurchaseModalProps) {
                             <tfoot className="bg-slate-50 font-bold text-slate-800">
                                 <tr>
                                     <td colSpan={3} className="p-3 text-right uppercase tracking-wide text-xs text-slate-500">Total Amount</td>
-                                    <td className="p-3 text-right text-lg">₦{calculateTotal().toLocaleString()}</td>
+                                    <td className="p-3 text-right text-lg">₦{total.toLocaleString()}</td>
                                     <td></td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
 
-                    {/* Payment Info */}
-                    <div className="flex justify-end gap-3 items-center">
-                        <label className="font-bold text-slate-700">Amount Paid:</label>
-                        <input
-                            type="number"
-                            className="w-40 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-right font-bold"
-                            value={paidAmount}
-                            onChange={e => setPaidAmount(parseFloat(e.target.value) || 0)}
-                        />
+                    {/* Payment Section */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                        <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide">Payment</h3>
+
+                        {/* Payment Mode Tabs */}
+                        <div className="flex gap-2">
+                            {(['CASH', 'TRANSFER', 'MIX'] as PaymentMode[]).map(mode => (
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    onClick={() => {
+                                        setPaymentMode(mode);
+                                        // Reset amounts on mode switch
+                                        setPaidAmount(0);
+                                        setCashAmount(0);
+                                        setTransferAmount(0);
+                                    }}
+                                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold border transition-colors ${
+                                        paymentMode === mode
+                                            ? 'bg-emerald-600 text-white border-emerald-600'
+                                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    {mode === 'CASH' && <Banknote className="w-4 h-4" />}
+                                    {mode === 'TRANSFER' && <Banknote className="w-4 h-4" />}
+                                    {mode === 'MIX' && <ArrowLeftRight className="w-4 h-4" />}
+                                    {mode === 'MIX' ? 'Cash + Transfer' : mode.charAt(0) + mode.slice(1).toLowerCase()}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Payment Input(s) */}
+                        {(paymentMode === 'CASH' || paymentMode === 'TRANSFER') && (
+                            <div className="flex items-center gap-3">
+                                <label className="font-bold text-slate-700 text-sm whitespace-nowrap">
+                                    Amount Paid ({paymentMode === 'CASH' ? 'Cash' : 'Transfer'}):
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    className="w-44 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-right font-bold"
+                                    value={paidAmount}
+                                    onChange={e => setPaidAmount(parseFloat(e.target.value) || 0)}
+                                />
+                            </div>
+                        )}
+
+                        {paymentMode === 'MIX' && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1">
+                                        <Banknote className="w-4 h-4 text-emerald-600" /> Cash Amount
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-right font-bold"
+                                        value={cashAmount}
+                                        onChange={e => setCashAmount(parseFloat(e.target.value) || 0)}
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1">
+                                        <ArrowLeftRight className="w-4 h-4 text-blue-500" /> Transfer Amount
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        className="w-full p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-right font-bold"
+                                        value={transferAmount}
+                                        onChange={e => setTransferAmount(parseFloat(e.target.value) || 0)}
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div className="sm:col-span-2 bg-white border border-slate-200 rounded-lg px-3 py-2 flex justify-between items-center text-sm">
+                                    <span className="text-slate-500">Total Payment:</span>
+                                    <span className="font-bold text-slate-800">₦{resolvedPaidAmount.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-between shrink-0">
-                    <div className="text-sm">
-                        <span className="text-slate-500">Balance due to Supplier:</span>
-                        <span className="font-bold text-red-600 ml-2">₦{Math.max(0, calculateTotal() - paidAmount).toLocaleString()}</span>
+                {/* Footer */}
+                <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
+                    <div className="text-sm space-y-0.5">
+                        <div>
+                            <span className="text-slate-500">Amount Paid:</span>
+                            <span className="font-bold text-emerald-600 ml-2">₦{paid.toLocaleString()}</span>
+                        </div>
+                        <div>
+                            <span className="text-slate-500">Balance due to Supplier:</span>
+                            <span className={`font-bold ml-2 ${balanceDue > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                                ₦{balanceDue.toLocaleString()}
+                            </span>
+                        </div>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={onClose} className="px-5 py-2.5 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
-                        <button onClick={handleSubmit} className="px-5 py-2.5 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2">
-                            <Save className="w-4 h-4" /> Save Purchase
+                        <button onClick={handleClose} disabled={isSubmitting} className="px-5 py-2.5 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50">Cancel</button>
+                        <button onClick={handleSubmit} disabled={isSubmitting} className="px-5 py-2.5 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2 disabled:opacity-50">
+                            <Save className="w-4 h-4" /> {isSubmitting ? 'Saving...' : 'Save Purchase'}
                         </button>
                     </div>
                 </div>
-
             </div>
         </div>
     );

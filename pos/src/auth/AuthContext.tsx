@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { db } from '../db/db';
+import { db } from '../firebase/config';
+import { collection, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -25,10 +26,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (username: string, password: string) => {
     setLoading(true);
     try {
-
-      // 2. Check local Dexie 'users' table
-      const user = await db.users.where('username').equalsIgnoreCase(username).first();
+      let user: User | null = null;
       
+      const q = query(
+        collection(db, 'users'),
+        where('username', '==', username)
+      );
+      const snapshot = await getDocs(q);
+      
+      if (!snapshot.empty) {
+        const docSnap = snapshot.docs[0];
+        user = { id: docSnap.id, ...docSnap.data() } as User;
+      }
+
       if (user && user.password === password) {
         setCurrentUser(user);
         sessionStorage.setItem('ganewa_auth_user', JSON.stringify(user));
@@ -52,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const changePassword = async (newPassword: string) => {
     try {
       if (currentUser && currentUser.id) {
-        await db.users.update(currentUser.id, { password: newPassword });
+        await updateDoc(doc(db, 'users', currentUser.id), { password: newPassword });
         return { success: true };
       }
       return { success: false, error: 'Password change not supported for this user.' };

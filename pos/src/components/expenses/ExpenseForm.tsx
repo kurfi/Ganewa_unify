@@ -15,26 +15,42 @@ interface ExpenseFormProps {
     paymentMethod: PaymentMethod;
     setPaymentMethod: (val: PaymentMethod) => void;
     addExpense: (e: React.FormEvent) => Promise<void>;
+    /** Increment this after a successful submission to force a balance re-fetch (BUG 2 fix) */
+    refreshKey?: number;
 }
 
-export function ExpenseForm({ amount, setAmount, category, setCategory, note, setNote, status, setStatus, paymentMethod, setPaymentMethod, addExpense }: ExpenseFormProps) {
+export function ExpenseForm({ amount, setAmount, category, setCategory, note, setNote, status, setStatus, paymentMethod, setPaymentMethod, addExpense, refreshKey }: ExpenseFormProps) {
     const [cashAtHand, setCashAtHand] = useState<number | null>(null);
     const [moneyInBank, setMoneyInBank] = useState<number | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // BUG 2 FIX: Re-fetch the live balance whenever the payment method changes (Cash vs Bank)
+    // or whenever the parent signals that a new expense was just submitted (via refreshKey).
     useEffect(() => {
         computeBalances()
             .then(b => { setCashAtHand(b.cashAtHand); setMoneyInBank(b.moneyInBank); })
             .catch(() => { });
-    }, []);
+    }, [paymentMethod, refreshKey]);
 
     const BANK_METHODS = [PaymentMethod.TRANSFER, PaymentMethod.CARD];
     const availableBalance = BANK_METHODS.includes(paymentMethod) ? moneyInBank : cashAtHand;
     const balanceLabel = BANK_METHODS.includes(paymentMethod) ? 'Bank balance' : 'Cash at hand';
+    const handleFormSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            await addExpense(e);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
     return (
         <div className="lg:col-span-1">
             <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200">
                 <h2 className="text-base md:text-lg font-bold mb-3 md:mb-4 text-slate-800">Record Expense</h2>
-                <form onSubmit={addExpense} className="space-y-3 md:space-y-4">
+                <form onSubmit={handleFormSubmit} className="space-y-3 md:space-y-4">
                     <div>
                         <label className="block text-xs md:text-sm font-medium text-slate-600 mb-1">Category</label>
                         <select value={category} onChange={e => setCategory(e.target.value)} className="w-full p-2 border rounded-lg text-sm bg-white">
@@ -58,10 +74,11 @@ export function ExpenseForm({ amount, setAmount, category, setCategory, note, se
                                 .map(cat => (
                                     <option key={cat} value={cat}>{cat}</option>
                                 ))}
-                            <option>Rent</option>
-                            <option>Utilities</option>
-                            <option>Salaries</option>
-                            <option>Maintenance</option>
+                            {/* BUG 5 FIX: explicit value= so these behave consistently */}
+                            <option value="Rent">Rent</option>
+                            <option value="Utilities">Utilities</option>
+                            <option value="Salaries">Salaries</option>
+                            <option value="Maintenance">Maintenance</option>
                         </select>
                     </div>
                     <div>
@@ -128,8 +145,8 @@ export function ExpenseForm({ amount, setAmount, category, setCategory, note, se
                         <label className="block text-xs md:text-sm font-medium text-slate-600 mb-1">Note</label>
                         <textarea value={note} onChange={e => setNote(e.target.value)} className="w-full p-2 border rounded-lg text-sm" rows={2}></textarea>
                     </div>
-                    <button className={`w-full py-2 rounded-lg font-medium text-white text-sm ${status === 'PAID' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
-                        {status === 'PAID' ? 'Record Payment' : 'Record Unpaid Expense'}
+                    <button disabled={isSubmitting} className={`w-full py-2 rounded-lg font-medium text-white text-sm disabled:opacity-50 ${status === 'PAID' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                        {isSubmitting ? 'Recording...' : (status === 'PAID' ? 'Record Payment' : 'Record Unpaid Expense')}
                     </button>
                 </form>
             </div>

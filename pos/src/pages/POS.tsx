@@ -1,18 +1,18 @@
-import * as React from 'react';
-import { useState, useRef } from 'react';
-import { db } from '../db/db';
-import { Product, Customer, SaleStatus, PaymentMethod } from '../types';
+import { useState, useRef, useMemo, useEffect } from 'react';
+import { Product, Customer, SaleStatus, PaymentMethod, Sale } from '../types';
 import { Search } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { generateReceiptBuffer, printRawReceipt } from '../services/printerService';
-import { requestUSBPrinter, printRawUSB, isPrinterConnected } from '../services/webUsbPrinterService';
-import { savePdf, saveElementAsImage, getElementAsFile, generateAndSavePdfFromHtml, copyElementToClipboard } from '../services/pdfService';
-
+import { printThermalReceipt } from '../services/printerService';
+import { saveElementAsImage, getElementAsFile, generateAndSavePdfFromHtml, copyElementToClipboard } from '../services/pdfService';
+import { where, limit, orderBy } from 'firebase/firestore';
+import { searchCustomerSalesPOS } from '../services/customerSalesService';
+import { normalizeFirestoreDates, useCollection } from '../firebase/firestoreHelpers';
+import { customersRepo } from '../repositories';
 
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../auth/AuthContext';
 import { useCart } from '../hooks/useCart';
 import { usePOS } from '../hooks/usePOS';
+import { useAuthStatus } from '../hooks/useAuthStatus';
 
 import { ProductGrid } from '../components/pos/ProductGrid';
 import { CartPanel } from '../components/pos/CartPanel';
@@ -23,7 +23,6 @@ import { PosTabs } from '../components/pos/PosTabs';
 import { HeldSalesPanel } from '../components/pos/HeldSalesPanel';
 import { HistoryPanel } from '../components/pos/HistoryPanel';
 
-import '../print.css';
 
 const isMobileDevice = (): boolean => {
     return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent)
@@ -33,6 +32,7 @@ const isMobileDevice = (): boolean => {
 
 export default function POS() {
     const { currentUser, isAdmin } = useAuth();
+    const authStatus = useAuthStatus();
     const [searchQuery, setSearchQuery] = useState('');
     const [historySearchQuery, setHistorySearchQuery] = useState('');
     const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -44,16 +44,78 @@ export default function POS() {
     const [discount, setDiscount] = useState<number>(0);
     const [isWholesaleMode, setIsWholesaleMode] = useState(false);
     const [historySortOrder, setHistorySortOrder] = useState<'asc' | 'desc'>('desc');
+    const [customerSalesResults, setCustomerSalesResults] = useState<Sale[]>([]);
+    const [isSearchingCustomerSales, setIsSearchingCustomerSales] = useState(false);
     const { showToast } = useToast();
 
     // UI state
     const [activeTab, setActiveTab] = useState<'cart' | 'held' | 'history'>('cart');
     const [mobileView, setMobileView] = useState<'catalog' | 'checkout'>('catalog');
 
-    // Customers
-    const customers = useLiveQuery(() =>
-        db.customers.filter(c => c.name !== 'Walk-in Customer').toArray()
-    );
+    // Firestore Real-time subscriptions (scoped to prevent reading all historical sales)
+    const { data: rawCustomers } = useCollection<Customer>('customers');
+    const { data: rawProducts } = useCollection<Product>('products');
+    const { data: heldSalesDocs } = useCollection<Sale>('sales', useMemo(() => [where('status', '==', SaleStatus.HELD)], []));
+    const { data: recentSalesDocs } = useCollection<Sale>('sales', useMemo(() => [where('status', '==', SaleStatus.COMPLETED), orderBy('date', 'desc'), limit(100)], []));
+
+    const customers = useMemo(() => {
+        return rawCustomers.filter(c => {
+            if (c.deleted) return false;
+            if (!c.name || c.name.trim() === '' || c.name === 'Walk-in Customer') return false;
+            return true;
+        });
+    }, [rawCustomers]);
+
+    // Fetch customer sales via Cloud Function when the operator searches in the POS History tab.
+    // The function does a server-side prefix match on `nameLower` and returns up to 50 sales
+    // per matched customer (max 5 customers) with per-customer aggregate totals.
+    useEffect(() => {
+        const searchTrimmed = historySearchQuery.trim();
+        if (!searchTrimmed || searchTrimmed.length < 2) {
+            setCustomerSalesResults([]);
+            setIsSearchingCustomerSales(false);
+            return;
+        }
+
+        let cancelled = false;
+        setIsSearchingCustomerSales(true);
+
+        const fetchCustomerSales = async () => {
+            try {
+                const result = await searchCustomerSalesPOS(searchTrimmed);
+                if (!cancelled) {
+                    // Dates arrive as ISO strings — parse them to Date for downstream filters
+                    const parsedSales = result.sales.map(s => ({
+                        ...s,
+                        date: s.date ? new Date(s.date as any) : new Date(),
+                    })) as Sale[];
+                    setCustomerSalesResults(parsedSales);
+                }
+            } catch (error) {
+                console.error('[POS] Error fetching customer sales via Cloud Function:', error);
+                if (!cancelled) setCustomerSalesResults([]);
+            } finally {
+                if (!cancelled) setIsSearchingCustomerSales(false);
+            }
+        };
+
+        const timer = setTimeout(fetchCustomerSales, 300);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [historySearchQuery]);
+
+    // Clear POS product search box when a barcode is scanned
+    useEffect(() => {
+        const handleBarcodeScanned = () => {
+            setSearchQuery('');
+        };
+        window.addEventListener('barcode-scanned', handleBarcodeScanned);
+        return () => {
+            window.removeEventListener('barcode-scanned', handleBarcodeScanned);
+        };
+    }, []);
 
     // Hooks
     const cartManager = useCart(isWholesaleMode, showToast);
@@ -75,51 +137,89 @@ export default function POS() {
         setMobileView
     });
 
-    // Queries
-    const productsWithStock = useLiveQuery(async () => {
+    const productsWithStock = useMemo(() => {
         if (posManager.isProcessing) return null;
 
-        const prods = searchQuery.length === 0
-            ? await db.products.limit(100).toArray()
-            : await db.products
-                .where('name').startsWithIgnoreCase(searchQuery)
-                .limit(100)
-                .toArray();
+        const queryLower = (searchQuery || '').trim().toLowerCase();
+        let filtered = rawProducts.filter(p => !p.deleted && (p.name || '').trim().length > 0);
 
-        return prods.map(p => ({
+        if (queryLower) {
+            filtered = filtered.filter(p =>
+                (p.name || '').toLowerCase().includes(queryLower) ||
+                (p.category || '').toLowerCase().includes(queryLower)
+            );
+        }
+
+        return filtered.slice(0, 100).map(p => ({
             ...p,
             totalStock: p.quantity,
             validStock: p.quantity,
             isOutOfStock: p.quantity <= 0,
             hasExpiredStock: false
         }));
-    }, [searchQuery, posManager.isProcessing]);
+    }, [rawProducts, searchQuery, posManager.isProcessing]);
 
-    const recentSales = useLiveQuery(async () => {
-        if (!historySearchQuery) {
-            const sales = await db.sales
-                .orderBy('date')
-                .reverse()
-                .filter(s => s.status === SaleStatus.COMPLETED)
-                .limit(50)
-                .toArray();
-            return historySortOrder === 'desc' ? sales : sales.reverse();
+    const recentSales = useMemo(() => {
+        const completed = recentSalesDocs.filter(s => !s.deleted);
+
+        // If customer sales were fetched from Firestore via search query, merge them
+        if (historySearchQuery.trim() && customerSalesResults.length > 0) {
+            const map = new Map<string, Sale>();
+
+            customerSalesResults.forEach(s => {
+                if (s.id) map.set(s.id, s);
+            });
+
+            const q = historySearchQuery.toLowerCase();
+            completed.forEach(sale => {
+                if (sale.id) {
+                    if (
+                        (sale.customerName || '').toLowerCase().includes(q) ||
+                        (sale.id || '').toLowerCase().includes(q) ||
+                        (sale.invoiceNo || '').toLowerCase().includes(q)
+                    ) {
+                        map.set(sale.id, sale);
+                    }
+                }
+            });
+
+            const sorted = Array.from(map.values()).sort((a, b) => {
+                const timeA = a.date ? new Date(a.date).getTime() : 0;
+                const timeB = b.date ? new Date(b.date).getTime() : 0;
+                return historySortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+            });
+
+            return sorted.slice(0, 50);
         }
-        const q = (historySearchQuery || '').toLowerCase();
-        const sales = await db.sales
-            .where('status').equals(SaleStatus.COMPLETED)
-            .filter(sale =>
-                (sale.customerName || '').toLowerCase().includes(q) ||
-                (sale.id?.toString() || '').includes(q)
-            )
-            .sortBy('date');
-        const result = historySortOrder === 'desc' ? sales.reverse() : sales;
-        return result.slice(0, 50);
-    }, [historySearchQuery, historySortOrder]);
 
-    const heldSales = useLiveQuery(() =>
-        db.sales.where('status').equals(SaleStatus.HELD).sortBy('date').then(res => res.reverse())
-    );
+        let filtered = completed;
+        if (historySearchQuery) {
+            const q = historySearchQuery.toLowerCase();
+            filtered = completed.filter(sale =>
+                (sale.customerName || '').toLowerCase().includes(q) ||
+                (sale.id?.toString() || '').includes(q) ||
+                (sale.invoiceNo?.toString() || '').includes(q)
+            );
+        }
+
+        const sorted = [...filtered].sort((a, b) => {
+            const timeA = a.date ? new Date(a.date).getTime() : 0;
+            const timeB = b.date ? new Date(b.date).getTime() : 0;
+            return historySortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+        });
+
+        return sorted.slice(0, 50);
+    }, [recentSalesDocs, historySearchQuery, historySortOrder, customerSalesResults]);
+
+    const heldSales = useMemo(() => {
+        return heldSalesDocs
+            .filter(s => !s.deleted)
+            .sort((a, b) => {
+                const timeA = a.date ? new Date(a.date).getTime() : 0;
+                const timeB = b.date ? new Date(b.date).getTime() : 0;
+                return timeB - timeA;
+            });
+    }, [heldSalesDocs]);
 
     // Helpers for Receipt sharing/printing
     const handleShareImage = async () => {
@@ -148,7 +248,6 @@ export default function POS() {
         const sale = posManager.receiptSale;
         const fileName = `receipt-${sale.invoiceNo || sale.id}.png`;
 
-        // Build the fallback text summary (used on desktop and as share title on mobile)
         const textSummary = [
             `*Ganewa Shopping Mall Kurfi*`,
             `Receipt: ${sale.invoiceNo || sale.id}`,
@@ -163,7 +262,6 @@ export default function POS() {
 
         try {
             if (isMobileDevice()) {
-                // --- MOBILE PATH: share image via native share sheet ---
                 const file = await getElementAsFile(receiptRef.current, fileName);
 
                 if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -173,13 +271,11 @@ export default function POS() {
                         text: textSummary,
                     });
                 } else {
-                    // Fallback: Web Share API not available on this mobile browser
                     const waUrl = `whatsapp://send?text=${encodeURIComponent(textSummary)}`;
                     window.open(waUrl, '_blank');
                     showToast('WhatsApp opened. Image sharing not supported on this browser.', 'info');
                 }
             } else {
-                // --- DESKTOP PATH: copy image to clipboard + open WhatsApp Web with text ---
                 const [imageCopied] = await Promise.allSettled([
                     copyElementToClipboard(receiptRef.current),
                     Promise.resolve(
@@ -198,7 +294,6 @@ export default function POS() {
                 }
             }
         } catch (error: any) {
-            // User cancelled the share sheet — not a real error
             if (error?.name === 'AbortError') return;
             console.error('WhatsApp share error:', error);
             showToast('Failed to share receipt.', 'error');
@@ -221,20 +316,61 @@ export default function POS() {
 
     const handlePrintRaw = async () => {
         if (!posManager.receiptSale) return;
-        try {
-            if (!isPrinterConnected()) await requestUSBPrinter();
-            const buffer = generateReceiptBuffer(posManager.receiptSale, {}, posManager.receiptCustomerDebt);
-            await printRawUSB(buffer);
-            showToast("Receipt sent to thermal printer.", "success");
-        } catch (error: any) {
-            console.error('Print Error:', error);
-            showToast(`Thermal printing failed: ${error.message || 'Unknown error'}`, 'error');
+        const currentSale = posManager.receiptSale;
+        const currentDebt = posManager.receiptCustomerDebt;
+
+        const res = await printThermalReceipt(currentSale, currentDebt, { paperSize });
+        if (res.direct) {
+            showToast("Receipt printed directly to thermal printer.", "success");
         }
+        // Close the receipt window after print execution completes
+        posManager.setReceiptSale(null);
     };
+
 
 
     return (
         <div className="h-[calc(100vh-4rem)] md:h-[calc(100vh-5rem)] flex flex-col md:p-4 gap-4 max-w-[1600px] mx-auto overflow-hidden">
+
+            {/* ── Firebase Auth Status Banner ── */}
+            {authStatus === 'failed' && (
+                <div
+                    id="pos-auth-error-banner"
+                    role="alert"
+                    className="flex items-center gap-3 px-4 py-3 rounded-lg text-white text-sm font-medium shadow-lg"
+                    style={{ background: 'linear-gradient(90deg,#dc2626,#b91c1c)', flexShrink: 0 }}
+                >
+                    <span style={{ fontSize: '1.25rem' }}>&#x26A0;&#xFE0F;</span>
+                    <span>
+                        <strong>POS Server Connection Lost.</strong>{' '}
+                        Sales cannot be processed right now. Check your internet connection and refresh the page.
+                        If this persists, contact your administrator — the store password may need to be updated.
+                    </span>
+                </div>
+            )}
+            {authStatus === 'pending' && (
+                <div
+                    id="pos-auth-pending-banner"
+                    role="status"
+                    className="flex items-center gap-3 px-4 py-2 rounded-lg text-white text-sm shadow-md"
+                    style={{ background: 'linear-gradient(90deg,#d97706,#b45309)', flexShrink: 0 }}
+                >
+                    <span
+                        style={{
+                            display: 'inline-block',
+                            width: 16,
+                            height: 16,
+                            border: '2px solid rgba(255,255,255,0.4)',
+                            borderTopColor: '#fff',
+                            borderRadius: '50%',
+                            animation: 'spin 0.8s linear infinite',
+                            flexShrink: 0
+                        }}
+                    />
+                    Connecting to server, please wait…
+                </div>
+            )}
+
             {/* Header Section */}
             <PosHeader
                 cartItemCount={cartManager.cartItemCount}
@@ -256,11 +392,12 @@ export default function POS() {
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 md:w-5 md:h-5" />
                             <input
                                 type="text"
-                                placeholder="Search products or scan barcode..."
+                                placeholder="Search products by name or category..."
                                 className="w-full pl-9 md:pl-10 pr-4 py-2 md:py-2.5 text-sm md:text-base border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all shadow-sm"
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 autoFocus
+                                data-scan-safe="true"
                             />
                         </div>
                     </div>
@@ -314,38 +451,41 @@ export default function POS() {
                             recentSales={recentSales}
                             historySearchQuery={historySearchQuery}
                             setHistorySearchQuery={setHistorySearchQuery}
-                        setReceiptSale={async (sale) => {
-                            if (!sale.debtInfo && sale.customerId) {
-                                try {
-                                    const customer = await db.customers.get(sale.customerId);
-                                    if (customer) {
-                                        const thisSaleDebt = sale.paymentMethods
-                                            ? sale.paymentMethods.find(m => m.method === PaymentMethod.CREDIT)?.amount || 0
-                                            : sale.paymentMethod === PaymentMethod.CREDIT
-                                                ? (sale.finalAmount || 0)
-                                                : 0;
+                            isLoading={isSearchingCustomerSales}
+                            setReceiptSale={async (sale) => {
+                                if (sale.debtInfo) {
+                                    posManager.setReceiptCustomerDebt(sale.debtInfo);
+                                } else if (sale.customerId) {
+                                    try {
+                                        const customer = await customersRepo.getById(sale.customerId);
+                                        if (customer) {
+                                            const thisSaleDebt = sale.paymentMethods
+                                                ? sale.paymentMethods.find(m => m.method === PaymentMethod.CREDIT)?.amount || 0
+                                                : sale.paymentMethod === PaymentMethod.CREDIT
+                                                    ? (sale.finalAmount || 0)
+                                                    : 0;
 
-                                        const currentDebt = customer.currentDebt || 0;
-                                        const previousDebt = Math.max(0, currentDebt - thisSaleDebt);
+                                            const currentDebt = customer.currentDebt || 0;
+                                            const previousDebt = Math.max(0, currentDebt - thisSaleDebt);
 
-                                        posManager.setReceiptCustomerDebt({
-                                            previousDebt,
-                                            thisSaleDebt,
-                                            newDebt: previousDebt + thisSaleDebt,
-                                            creditLimit: customer.creditLimit || 0
-                                        });
-                                    } else {
+                                            posManager.setReceiptCustomerDebt({
+                                                previousDebt,
+                                                thisSaleDebt,
+                                                newDebt: previousDebt + thisSaleDebt,
+                                                creditLimit: customer.creditLimit || 0
+                                            });
+                                        } else {
+                                            posManager.setReceiptCustomerDebt(null);
+                                        }
+                                    } catch (e) {
+                                        console.error("Error fetching customer for history receipt:", e);
                                         posManager.setReceiptCustomerDebt(null);
                                     }
-                                } catch (e) {
-                                    console.error("Error fetching customer for history receipt:", e);
+                                } else {
                                     posManager.setReceiptCustomerDebt(null);
                                 }
-                            } else {
-                                posManager.setReceiptCustomerDebt(null);
-                            }
-                            posManager.setReceiptSale(sale);
-                        }}
+                                posManager.setReceiptSale(sale);
+                            }}
                             historySortOrder={historySortOrder}
                             setHistorySortOrder={setHistorySortOrder}
                         />

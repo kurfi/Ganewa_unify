@@ -15,42 +15,46 @@ export function ReturnsTable({ returns }: ReturnsTableProps) {
             </div>
             <div className="overflow-x-auto">
                 {/* Desktop Table View */}
-                <table className="hidden md:table min-w-full divide-y divide-slate-200 text-sm">
+                <table className="hidden md:table min-w-full divide-y divide-slate-200 text-sm text-slate-800">
                     <thead className="bg-slate-50">
                         <tr>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Return ID</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Date</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Original Sale</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Customer</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Reason</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Refund</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Amount</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Items</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Return ID</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Date</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Original Sale</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Customer</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Reason</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Refund</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Amount</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Items</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-slate-200">
+                    <tbody className="bg-white divide-y divide-slate-200 text-slate-800">
                         {returns.length > 0 ? (
                             returns.map(ret => (
                                 <tr key={ret.id} className="hover:bg-slate-50">
-                                    <td className="px-4 py-2 whitespace-nowrap font-medium text-slate-400 text-[10px]">#{ret.id}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap">{format(ret.returnDate, 'MMM dd, yyyy HH:mm')}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-slate-400">#{ret.saleId}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap font-medium">{ret.customerName || 'Walk-in'}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-slate-500">{ret.reason}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap text-[10px] uppercase font-bold text-slate-400">{ret.paymentMethod}</td>
-                                    <td className="px-4 py-2 whitespace-nowrap font-bold text-emerald-600">₦{(ret.totalRefundAmount || 0).toLocaleString()}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap font-medium text-slate-500 text-xs">#{ret.id}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-slate-700 text-xs">{format(ret.returnDate, 'MMM dd, yyyy HH:mm')}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-slate-500 text-xs">#{ret.saleId}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap font-medium text-slate-800 text-xs">{ret.customerName || 'Walk-in'}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-slate-600 text-xs">{ret.reason}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap text-xs uppercase font-bold text-slate-500">{ret.paymentMethod}</td>
+                                    <td className="px-4 py-2 whitespace-nowrap font-bold text-emerald-600 text-sm">₦{(ret.totalRefundAmount || 0).toLocaleString()}</td>
                                     <td className="px-4 py-2">
-                                        <div className="max-w-[200px] truncate space-y-1">
-                                            {ret.returnedItems?.map((item, index) => (
-                                                <div key={index} className="flex items-center gap-1 text-[10px]">
-                                                    {item.restockStatus === 'restocked' ? (
-                                                        <CheckCircle className="w-2.5 h-2.5 text-emerald-500" />
-                                                    ) : (
-                                                        <XCircle className="w-2.5 h-2.5 text-red-500" />
-                                                    )}
-                                                    {item.productName} ({item.quantity})
-                                                </div>
-                                            ))}
+                                        <div className="max-w-[280px] space-y-1">
+                                            {ret.returnedItems?.map((item, index) => {
+                                                const itemName = item.productName || (item as any).name || 'Unknown Product';
+                                                return (
+                                                    <div key={index} className="flex items-center gap-1.5 text-xs text-slate-800" title={`${itemName} (${item.quantity})`}>
+                                                        {item.restockStatus === 'restocked' ? (
+                                                            <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                                                        ) : (
+                                                            <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                                        )}
+                                                        <span className="truncate font-medium text-slate-800">{itemName}</span>
+                                                        <span className="text-slate-500 font-semibold shrink-0">({item.quantity})</span>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </td>
                                 </tr>

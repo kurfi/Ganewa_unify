@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../../contexts/ToastContext';
-import { X, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
-import { Product } from '../../types';
+import { useModalRegistration } from '../../contexts/ModalContext';
+import { X, Upload, Loader2, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
+import { Product, DiscountTier } from '../../types';
 import { uploadToCloudinary } from '../../services/cloudinary';
 import { PRODUCT_CATEGORIES } from '../../constants/productCategories';
 import { validateInventoryField, validateNumericField } from '../../utils/validation';
+import { ImageWithFallback } from '../ImageWithFallback';
 
 interface ProductModalProps {
     isModalOpen: boolean;
     setIsModalOpen: (open: boolean) => void;
     editingProduct: Product | null;
     formData: Partial<Product>;
-    handleSubmit: (data: Partial<Product>) => void;
+    handleSubmit: (data: Partial<Product>) => Promise<void>;
 }
 
 export function ProductModal({
@@ -21,10 +23,64 @@ export function ProductModal({
     formData: initialFormData,
     handleSubmit
 }: ProductModalProps) {
+    useModalRegistration(isModalOpen);
     const { showToast } = useToast();
     const [uploading, setUploading] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [localFormData, setLocalFormData] = useState<Partial<Product>>(initialFormData);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const [newTierName, setNewTierName] = useState('');
+    const [newTierQty, setNewTierQty] = useState('');
+    const [newTierPrice, setNewTierPrice] = useState('');
+
+    const handleAddTier = () => {
+        if (!newTierName.trim()) {
+            showToast('Tier name is required (e.g. Dozen, Roll, Carton)', 'error');
+            return;
+        }
+        const qty = parseInt(newTierQty);
+        if (isNaN(qty) || qty <= 1) {
+            showToast('Minimum quantity must be greater than 1', 'error');
+            return;
+        }
+        const price = parseFloat(newTierPrice);
+        if (isNaN(price) || price <= 0) {
+            showToast('Price per unit must be a positive number', 'error');
+            return;
+        }
+        if (localFormData.sellPrice && price >= localFormData.sellPrice) {
+            showToast('Discount price per unit must be less than regular selling price', 'error');
+            return;
+        }
+
+        const currentTiers = localFormData.onlineDiscountTiers || [];
+        if (currentTiers.some(t => t.name.toLowerCase() === newTierName.toLowerCase())) {
+            showToast('A tier with this name already exists', 'error');
+            return;
+        }
+        if (currentTiers.some(t => t.minQuantity === qty)) {
+            showToast('A tier with this minimum quantity already exists', 'error');
+            return;
+        }
+
+        const newTier: DiscountTier = { name: newTierName.trim(), minQuantity: qty, pricePerUnit: price };
+        setLocalFormData(prev => ({
+            ...prev,
+            onlineDiscountTiers: [...(prev.onlineDiscountTiers || []), newTier]
+        }));
+
+        setNewTierName('');
+        setNewTierQty('');
+        setNewTierPrice('');
+    };
+
+    const handleRemoveTier = (index: number) => {
+        setLocalFormData(prev => ({
+            ...prev,
+            onlineDiscountTiers: (prev.onlineDiscountTiers || []).filter((_, i) => i !== index)
+        }));
+    };
 
     // Sync local state when modal opens or initial data changes
     useEffect(() => {
@@ -65,8 +121,10 @@ export function ProductModal({
         }
     };
 
-    const onFormSubmit = (e: React.FormEvent) => {
+    const onFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (isSubmitting) return;
 
         // Validate name
         if (!localFormData.name?.trim()) {
@@ -91,13 +149,18 @@ export function ProductModal({
         if (!validateNumericField(localFormData.wholesalePrice || 0, 'Wholesale Price', 0, showToast)) return;
         if (!validateNumericField(localFormData.minStockLevel || 0, 'Min Stock Level', 0, showToast)) return;
 
-        handleSubmit(localFormData);
+        setIsSubmitting(true);
+        try {
+            await handleSubmit(localFormData);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     if (!isModalOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" data-modal="true" className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
                 <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
                     <h2 className="font-bold text-lg text-slate-800">{editingProduct ? 'Edit Product' : 'Add New Product'}</h2>
@@ -114,10 +177,16 @@ export function ProductModal({
                                 </div>
                             ) : previewUrl || localFormData.photo ? (
                                 <div className="relative w-full h-full flex items-center justify-center">
-                                    <img
+                                    <ImageWithFallback
                                         src={previewUrl || localFormData.photo}
                                         alt="Product preview"
                                         className="max-h-32 object-contain rounded-lg"
+                                        fallback={
+                                            <div className="flex flex-col items-center justify-center gap-2 text-slate-400 py-4">
+                                                <ImageIcon className="w-10 h-10 opacity-60" />
+                                                <span className="text-xs">Failed to load preview</span>
+                                            </div>
+                                        }
                                     />
                                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
                                         <label className="cursor-pointer bg-white px-4 py-2 rounded-full text-slate-800 text-sm font-semibold border border-white/30 hover:bg-slate-50 transition-colors">
@@ -228,11 +297,104 @@ export function ProductModal({
                             />
                         </div>
 
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Barcode (EAN/UPC)</label>
+                            <input
+                                type="text"
+                                placeholder="Scan or enter barcode"
+                                className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                                value={localFormData.barcode ?? ''}
+                                onChange={e => setLocalFormData({ ...localFormData, barcode: e.target.value.trim() })}
+                            />
+                        </div>
+
+                        {/* Online Quantity Discounts Section */}
+                        <div className="col-span-2 border-t border-slate-100 pt-4 mt-2">
+                            <h3 className="text-sm font-bold text-slate-800 mb-2">Online Quantity Discounts (for E-commerce)</h3>
+                            <p className="text-xs text-slate-500 mb-4">Set quantity breakpoints where online customers get a cheaper unit price (e.g. Dozen, Roll, Carton).</p>
+                            
+                            {/* Current Tiers List */}
+                            {localFormData.onlineDiscountTiers && localFormData.onlineDiscountTiers.length > 0 ? (
+                                <div className="space-y-2 mb-4">
+                                    {localFormData.onlineDiscountTiers.map((tier, index) => (
+                                        <div key={index} className="flex justify-between items-center p-3 bg-emerald-50/50 rounded-lg border border-emerald-100">
+                                            <div className="flex items-center gap-4 text-xs font-semibold text-slate-800">
+                                                <span className="bg-emerald-600 text-white px-2 py-0.5 rounded uppercase text-[10px] tracking-wider">{tier.name}</span>
+                                                <span>Min Quantity: <span className="font-bold text-slate-900">{tier.minQuantity}</span></span>
+                                                <span>Price/Unit: <span className="font-bold text-emerald-700">₦{tier.pricePerUnit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></span>
+                                            </div>
+                                            <button 
+                                                type="button" 
+                                                onClick={() => handleRemoveTier(index)}
+                                                className="text-red-400 hover:text-red-600 transition-colors p-1"
+                                                title="Remove Discount Tier"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-slate-50 rounded-lg border border-dashed border-slate-200 text-center text-xs text-slate-400 mb-4">
+                                    No online quantity discounts defined for this product yet.
+                                </div>
+                            )}
+
+                            {/* Add Tier Editor Form */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tier Name (e.g., Dozen)</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Dozen"
+                                        className="w-full p-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                                        value={newTierName}
+                                        onChange={e => setNewTierName(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Min Quantity</label>
+                                    <input
+                                        type="number"
+                                        placeholder="12"
+                                        min="2"
+                                        className="w-full p-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                                        value={newTierQty}
+                                        onChange={e => setNewTierQty(e.target.value)}
+                                    />
+                                </div>
+                                <div className="flex gap-2 items-end">
+                                    <div className="flex-1">
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Price per Unit (₦)</label>
+                                        <input
+                                            type="number"
+                                            placeholder="200"
+                                            min="0.01"
+                                            step="any"
+                                            className="w-full p-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                                            value={newTierPrice}
+                                            onChange={e => setNewTierPrice(e.target.value)}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleAddTier}
+                                        className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors flex items-center justify-center h-9 w-9 shrink-0"
+                                        title="Add Tier"
+                                    >
+                                        <Plus className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
 
                     <div className="col-span-2 pt-4 flex gap-3">
-                        <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2.5 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
-                        <button type="submit" className="flex-1 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors">Save Product</button>
+                        <button type="button" onClick={() => setIsModalOpen(false)} disabled={isSubmitting} className="flex-1 py-2.5 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50">Cancel</button>
+                        <button type="submit" disabled={isSubmitting || uploading} className="flex-1 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                            {isSubmitting ? 'Saving...' : 'Save Product'}
+                        </button>
                     </div>
                 </form>
             </div>

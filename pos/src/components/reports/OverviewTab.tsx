@@ -31,6 +31,8 @@ export function OverviewTab({
     totalDiscounts, totalRefunds, totalTransactions, salesByDate,
     salesByPayment, topProducts, totalDebtPaid
 }: OverviewTabProps) {
+    const remainingBalance = (totalRevenue || 0) - (totalExpenses || 0) - (totalRefunds || 0);
+
     return (
         <div className="space-y-4 md:space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
@@ -68,6 +70,17 @@ export function OverviewTab({
                             <h3 className="text-sm md:text-xl font-bold text-red-500 mt-1">₦{(totalExpenses || 0).toLocaleString()}</h3>
                         </div>
                         <div className="p-1.5 md:p-2 bg-red-100 rounded-lg text-red-600"><CreditCard className="w-3.5 h-3.5 md:w-4 md:h-4" /></div>
+                    </div>
+                </div>
+                <div className="bg-white p-3 md:p-5 rounded-xl shadow-sm border border-slate-200 bg-gradient-to-br from-indigo-50/60 to-white">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-slate-500 text-[8px] md:text-[10px] font-bold uppercase tracking-wider">Remaining Balance</p>
+                            <h3 className={`text-sm md:text-xl font-bold mt-1 ${remainingBalance >= 0 ? 'text-indigo-600' : 'text-red-500'}`}>
+                                ₦{remainingBalance.toLocaleString()}
+                            </h3>
+                        </div>
+                        <div className="p-1.5 md:p-2 bg-indigo-100 rounded-lg text-indigo-600"><span className="w-3.5 h-3.5 md:w-4 md:h-4 flex items-center justify-center font-bold text-xs md:text-sm">₦</span></div>
                     </div>
                 </div>
                 <div className="bg-white p-3 md:p-5 rounded-xl shadow-sm border border-slate-200">

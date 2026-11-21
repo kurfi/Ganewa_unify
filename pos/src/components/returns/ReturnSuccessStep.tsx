@@ -1,7 +1,8 @@
 import React, { RefObject } from 'react';
-import { CheckCircle, Download, Image as ImageIcon, RotateCcw } from 'lucide-react';
+import { CheckCircle, Download, Image as ImageIcon, RotateCcw, Printer } from 'lucide-react';
 import ReturnReceiptDisplay from '../ReturnReceiptDisplay';
 import { Sale, SaleItem, PaymentMethod, ReturnReason, Customer, User } from '../../types';
+import { printThermalReturnReceipt } from '../../services/printerService';
 
 interface ReturnSuccessStepProps {
     originalSale: Sale;
@@ -23,6 +24,20 @@ export function ReturnSuccessStep({
     refundMethod, customer, currentUser, returnId, receiptRef,
     handleDownloadReturnPdf, handleDownloadReturnImage, startNewReturn
 }: ReturnSuccessStepProps) {
+    const handlePrintThermal = async () => {
+        await printThermalReturnReceipt({
+            originalSale,
+            returnItems: returnableItems,
+            totalRefundAmount,
+            returnReason,
+            refundMethod,
+            customer,
+            cashierUsername: currentUser?.username || 'N/A',
+            returnDate: new Date(),
+            returnId
+        });
+    };
+
     return (
         <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200 text-center">
             <CheckCircle className="w-12 h-12 md:w-16 md:h-16 text-emerald-500 mx-auto mb-3 md:mb-4" />
@@ -45,6 +60,12 @@ export function ReturnSuccessStep({
             </div>
 
             <div className="flex flex-wrap justify-center gap-2 md:gap-3 mt-6">
+                <button
+                    onClick={handlePrintThermal}
+                    className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors text-xs md:text-sm font-bold"
+                >
+                    <Printer className="w-3.5 h-3.5 md:w-4 md:h-4" /> Thermal Print
+                </button>
                 <button
                     onClick={handleDownloadReturnPdf}
                     className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-xs md:text-sm"

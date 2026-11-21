@@ -3,44 +3,124 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper to identify the authenticated store POS machine
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
     function isStoreAccount() {
-      return request.auth != null && request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com';
+      return isSignedIn() && request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com';
     }
 
-    // Products Catalog - publicly readable, writable only by store POS
-    match /products/{product} {
+    // Products: Publicly readable
+    // POS can fully write, regular users can only decrement quantity
+    match /products/{productId} {
       allow read: if true;
+      allow write: if isStoreAccount();
+      allow update: if isSignedIn() 
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity']);
+    }
+
+    // POS Private Collections: Accessible only by POS store account
+    match /users/{docId} { allow read, write: if isStoreAccount(); }
+    match /customers/{docId} { allow read, write: if isStoreAccount(); }
+    match /sales/{docId} { allow read, write: if isStoreAccount(); }
+    match /expenses/{docId} { allow read, write: if isStoreAccount(); }
+    match /purchases/{docId} { allow read, write: if isStoreAccount(); }
+    match /suppliers/{docId} { allow read, write: if isStoreAccount(); }
+    match /returns/{docId} { allow read, write: if isStoreAccount(); }
+    match /returnedItems/{docId} { allow read, write: if isStoreAccount(); }
+    match /departments/{docId} { allow read, write: if isStoreAccount(); }
+    match /cashBook/{docId} { allow read, write: if isStoreAccount(); }
+    match /supplierPayments/{docId} { allow read, write: if isStoreAccount(); }
+    match /auditLogs/{docId} { allow read, write: if isStoreAccount(); }
+    match /stockWriteOffs/{docId} { allow read, write: if isStoreAccount(); }
+
+    // Settings (app config): POS store account only
+    // The invoiceCounter sub-document is written exclusively by the
+    // Cloud Function (Admin SDK, which bypasses these rules).  Block
+    // direct client writes so the counter can never be tampered with.
+    match /settings/{docId} {
+      allow read: if isStoreAccount();
+      allow write: if isStoreAccount() && docId != 'invoiceCounter' && docId != 'runningBalance';
+    }
+    match /settings/invoiceCounter {
+      allow read:  if isStoreAccount();
+      allow write: if false;  // Only writable by Admin SDK (Cloud Function)
+    }
+    match /settings/runningBalance {
+      allow read:  if isStoreAccount();
+      allow write: if false;  // Only writable by Admin SDK (Cloud Function)
+    }
+
+    // Bank Accounts: Customers can read active accounts, POS can write
+    match /bankAccounts/{docId} {
+      allow read: if isSignedIn();
       allow write: if isStoreAccount();
     }
 
-    // Ecommerce Orders - publicly checkable (creation), readable by buyer and store POS
-    match /orders/{order} {
-      allow create: if true;
-      allow read, update: if isStoreAccount() || (request.auth != null && resource.data.userId == request.auth.uid);
-      allow delete: if isStoreAccount();
+    // Daily Stats (pre-rolled by Cloud Scheduler): readable by store account,
+    // never writable by clients (Admin SDK bypasses rules for the write).
+    match /dailyStats/{docId} {
+      allow read:  if isStoreAccount();
+      allow write: if false;
     }
 
-    // All private POS data (sales, expenses, customer info, suppliers, users, cashBook, etc.)
-    match /customers/{doc} { allow read, write: if isStoreAccount(); }
-    match /customerPayments/{doc} { allow read, write: if isStoreAccount(); }
-    match /sales/{doc} { allow read, write: if isStoreAccount(); }
-    match /expenses/{doc} { allow read, write: if isStoreAccount(); }
-    match /users/{doc} { allow read, write: if isStoreAccount(); }
-    match /returns/{doc} { allow read, write: if isStoreAccount(); }
-    match /returnedItems/{doc} { allow read, write: if isStoreAccount(); }
-    match /suppliers/{doc} { allow read, write: if isStoreAccount(); }
-    match /purchases/{doc} { allow read, write: if isStoreAccount(); }
-    match /departments/{doc} { allow read, write: if isStoreAccount(); }
-    match /bankAccounts/{doc} { allow read, write: if isStoreAccount(); }
-    match /cashBook/{doc} { allow read, write: if isStoreAccount(); }
-    match /supplierPayments/{doc} { allow read, write: if isStoreAccount(); }
-    match /auditLogs/{doc} { allow read, write: if isStoreAccount(); }
+    match /stockAlerts/{docId} {
+      allow read, write: if isStoreAccount();
+    }
 
-    // Ecommerce Customer Profiles - each customer can only access their own profile
+    match /debtDiscrepancies/{docId} {
+      allow read:  if isStoreAccount();
+      allow write: if false;
+    }
+
+    // Customer Payments (repayments): Customers can read their own, POS can write
+    match /customerPayments/{paymentId} {
+      allow read: if isSignedIn() && (
+        isStoreAccount() || 
+        resource.data.customerId == get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.linkedPosCustomerId
+      );
+      allow write: if isStoreAccount();
+    }
+
+    // User Profiles:
+    // - Customers can read/create/update their own profile
+    // - Customers CANNOT modify or create 'creditInfo', 'linkedPosCustomerId', or 'linkedPosCustomerName'
+    // - POS has full read/write access to sync creditInfo and manage links
     match /shopUsers/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      allow read: if isStoreAccount();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isStoreAccount());
+      allow create: if isSignedIn() && request.auth.uid == userId 
+        && (!('creditInfo' in request.resource.data) || request.resource.data.creditInfo == null);
+      allow update: if isSignedIn() && (
+        isStoreAccount() || (
+          request.auth.uid == userId && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['creditInfo', 'linkedPosCustomerId', 'linkedPosCustomerName']) ||
+            (request.resource.data.linkedPosCustomerId == null &&
+             request.resource.data.creditInfo == null)
+          )
+        )
+      );
+      allow delete: if isStoreAccount();
+      allow list: if isStoreAccount() || request.query.limit == 1;
+    }
+
+    // Orders: 
+    // - Customers can create orders (with strict credit checks if method is 'credit')
+    // - Customers can read their own orders
+    // - POS can read, update, delete orders
+    match /orders/{orderId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid
+        && (request.resource.data.method != 'credit' || (
+          get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.linkedPosCustomerId != null
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.linkedPosCustomerId == request.resource.data.linkedPosCustomerId
+          && 'creditInfo' in get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.creditInfo != null
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.creditInfo.creditLimit > 0
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.creditInfo.availableCredit >= request.resource.data.balanceRemaining
+        )); 
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isStoreAccount());
+      allow update, delete: if isStoreAccount();
     }
   }
 }

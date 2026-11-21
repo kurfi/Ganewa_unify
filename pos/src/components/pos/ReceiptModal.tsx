@@ -88,14 +88,14 @@ export function ReceiptModal({
           >
             {/* Header */}
             <div className="text-center mb-4">
-              <h1 className="text-lg md:text-xl font-bold mb-1">
-                Ganewa Shopping Mall Kurfi
+              <h1 className="text-base md:text-lg font-bold mb-1 uppercase tracking-wide">
+                GANEWA SHOPPING MALL KURFI
               </h1>
-              <p className="text-[10px] md:text-xs text-slate-600 uppercase">
-                Tashan Ladan, Mamman Na'antu Street
+              <p className="text-[10px] md:text-xs text-slate-600">
+                Tashan Ladan, Mamman Na'antu Street, Kurfi
               </p>
               <p className="text-[10px] md:text-xs text-slate-600">
-                GSM: 08031328041, 09121886883
+                Tel: 08031328041, 09121886883
               </p>
               <p className="text-[10px] md:text-xs text-slate-600">
                 Email: ganewashoppingmallkurfi@gmail.com
@@ -103,7 +103,11 @@ export function ReceiptModal({
             </div>
 
             {/* Meta Data */}
-            <div className="mb-4 space-y-1">
+            <div className="border-b border-dashed border-slate-300 pb-2 mb-3 space-y-1">
+              <div className="flex justify-between">
+                <span>Sale ID:</span>
+                <span>#{receiptSale.invoiceNo || receiptSale.id}</span>
+              </div>
               <div className="flex justify-between">
                 <span>Date:</span>
                 <span>
@@ -115,15 +119,15 @@ export function ReceiptModal({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>Inv No:</span>
-                <span>
-                  {receiptSale.invoiceNo || `INV-${receiptSale.id?.slice(0, 6).toUpperCase()}`}
-                </span>
-              </div>
-              <div className="flex justify-between">
                 <span>Customer:</span>
-                <span className="uppercase">{receiptSale.customerName}</span>
+                <span className="uppercase">{receiptSale.customerName || "Walk-in"}</span>
               </div>
+              {receiptSale.cashier && (
+                <div className="flex justify-between">
+                  <span>Cashier:</span>
+                  <span>{receiptSale.cashier}</span>
+                </div>
+              )}
             </div>
 
             {/* Table */}

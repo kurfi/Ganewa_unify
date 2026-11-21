@@ -8,7 +8,7 @@ interface FeaturedProductsProps {
 }
 
 export default function FeaturedProducts({ products }: FeaturedProductsProps) {
-    const { addToCart } = useCart();
+    const { addToCart, cart } = useCart();
     if (!products || products.length === 0) return null;
 
     return (
@@ -22,23 +22,39 @@ export default function FeaturedProducts({ products }: FeaturedProductsProps) {
                     </button>
                 </div>
                 <div className="lg:w-12/12 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {products.map(p => (
-                        <div
-                            key={p.id}
-                            onClick={() => addToCart(p.id!)}
-                            className="bg-white/5 backdrop-blur-sm border border-white/10 p-3 rounded-2xl hover:bg-white/10 transition-colors group cursor-pointer flex flex-col items-center text-center active:scale-95"
-                        >
-                            <div className="w-full aspect-square bg-white/5 rounded-xl mb-2 flex items-center justify-center overflow-hidden">
-                                {p.photo ? (
-                                    <img src={p.photo} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                                ) : (
-                                    <Package className="w-6 h-6 text-slate-600 group-hover:text-emerald-400 transition-colors" />
-                                )}
+                    {products.map(p => {
+                        const cartItem = cart.find(item => item.id === p.id);
+                        const cartQty = cartItem?.quantity || 0;
+                        const isAtMax = cartQty >= (p.quantity || 0);
+                        const isInCart = cartQty > 0;
+
+                        return (
+                            <div
+                                key={p.id}
+                                onClick={() => { if (!isAtMax) addToCart(p.id!, p.quantity || 0); }}
+                                className={`bg-white/5 backdrop-blur-sm border border-white/10 p-3 rounded-2xl hover:bg-white/10 transition-colors group flex flex-col items-center text-center active:scale-95 relative ${isAtMax ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+                            >
+                                {isAtMax ? (
+                                    <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-orange-500 text-white rounded-md text-[7px] font-black uppercase tracking-widest shadow-lg z-10">
+                                        Max
+                                    </div>
+                                ) : isInCart ? (
+                                    <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-emerald-500 text-white rounded-md text-[7px] font-black uppercase tracking-widest shadow-lg z-10">
+                                        In Cart
+                                    </div>
+                                ) : null}
+                                <div className="w-full aspect-square bg-white/5 rounded-xl mb-2 flex items-center justify-center overflow-hidden">
+                                    {p.photo ? (
+                                        <img src={p.photo} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                    ) : (
+                                        <Package className="w-6 h-6 text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                                    )}
+                                </div>
+                                <h4 className="font-bold text-[13px] truncate w-full mb-0.5 text-slate-100">{p.name}</h4>
+                                <p className="text-emerald-400 font-black text-sm italic">₦{(p.sellPrice || 0).toLocaleString()}</p>
                             </div>
-                            <h4 className="font-bold text-[13px] truncate w-full mb-0.5 text-slate-100">{p.name}</h4>
-                            <p className="text-emerald-400 font-black text-sm italic">₦{(p.sellPrice || 0).toLocaleString()}</p>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
 

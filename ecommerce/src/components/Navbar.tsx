@@ -10,9 +10,20 @@ import { useAuth } from '../contexts/AuthContext';
 interface NavbarProps {
     searchQuery: string;
     setSearchQuery: (query: string) => void;
+    activeCategory?: string;
+    setActiveCategory?: (category: string) => void;
+    categories?: string[];
+    getCategoryMetadata?: (cat: string) => { label: string; emoji: string };
 }
 
-export default function Navbar({ searchQuery, setSearchQuery }: NavbarProps) {
+export default function Navbar({ 
+    searchQuery, 
+    setSearchQuery,
+    activeCategory,
+    setActiveCategory,
+    categories,
+    getCategoryMetadata
+}: NavbarProps) {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const { totalItems } = useCart();
@@ -83,27 +94,44 @@ export default function Navbar({ searchQuery, setSearchQuery }: NavbarProps) {
 
                 <div className="flex items-center gap-3 lg:gap-4">
                     {/* Search */}
-                    <div className="relative group hidden sm:block">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                        <input
-                            type="text"
-                            placeholder="Search items..."
-                            className="pl-12 pr-10 py-3 bg-slate-100 border-none rounded-2xl w-48 lg:w-72 focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all outline-none text-sm font-medium"
-                            value={searchQuery}
-                            onChange={(e) => handleSearchChange(e.target.value)}
-                        />
-                        {searchQuery && (
-                            <button 
-                                onClick={() => setSearchQuery('')}
-                                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200 transition-colors"
-                            >
-                                <X className="w-3.5 h-3.5" />
-                            </button>
-                        )}
+                    <div className="hidden sm:flex items-center gap-2">
+                        <div className="relative group">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input
+                                type="text"
+                                placeholder="Search items..."
+                                className="pl-12 pr-10 py-3 bg-slate-100 border-none rounded-2xl w-40 lg:w-60 focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all outline-none text-sm font-medium"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        handleSearchChange(searchQuery);
+                                    }
+                                }}
+                            />
+                            {searchQuery && (
+                                <button 
+                                    onClick={() => {
+                                        setSearchQuery('');
+                                        handleSearchChange('');
+                                    }}
+                                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200 transition-colors"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => handleSearchChange(searchQuery)}
+                            className="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-md hover:shadow-lg active:scale-95 duration-150 flex items-center gap-1.5 shrink-0"
+                        >
+                            <Search className="w-3.5 h-3.5" />
+                            Search
+                        </button>
                     </div>
 
-                    {/* Cart */}
-                    <Link to="/cart" className="relative p-3.5 bg-slate-900 text-white rounded-2xl hover:bg-emerald-700 transition-all shadow-xl shadow-slate-200">
+                    {/* Cart — hidden on mobile (FAB handles mobile), visible sm+ */}
+                    <Link to="/cart" className="hidden sm:flex relative items-center p-3.5 bg-slate-900 text-white rounded-2xl hover:bg-emerald-700 transition-all shadow-xl shadow-slate-200">
                         <ShoppingCart className="w-5 h-5" />
                         {totalItems > 0 && (
                             <span className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[10px] font-black w-6 h-6 flex items-center justify-center rounded-full border-4 border-[#FDFDFD] ring-1 ring-emerald-100">
@@ -214,29 +242,45 @@ export default function Navbar({ searchQuery, setSearchQuery }: NavbarProps) {
                 {/* Mobile Menu Dropdown */}
                 {isMenuOpen && (
                     <div className="lg:hidden absolute top-[calc(100%+16px)] left-0 w-full bg-white border-b border-slate-100 p-4 shadow-xl z-50 rounded-b-2xl">
-                        <div className="relative group mb-6">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                            <input
-                                type="text"
-                                placeholder="Search items..."
-                                className="w-full pl-12 pr-10 py-3 bg-slate-100 border-none rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all outline-none text-sm font-medium"
-                                value={searchQuery}
-                                onChange={(e) => handleSearchChange(e.target.value)}
-                            />
-                            {searchQuery && (
-                                <button 
-                                    onClick={() => setSearchQuery('')}
-                                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200 transition-colors"
-                                >
-                                    <X className="w-3.5 h-3.5" />
-                                </button>
-                            )}
-                        </div>
                         <div className="flex flex-col gap-2 text-sm font-bold text-slate-600 uppercase tracking-wider">
                             <Link to="/" className="p-3 bg-slate-50 rounded-xl text-emerald-600" onClick={() => setIsMenuOpen(false)}>Catalog</Link>
                             <a href="#specials" className="p-3 hover:bg-slate-50 rounded-xl" onClick={() => setIsMenuOpen(false)}>Specials</a>
                             <a href="#how" className="p-3 hover:bg-slate-50 rounded-xl" onClick={() => setIsMenuOpen(false)}>How it works</a>
                             <a href="#support" className="p-3 hover:bg-slate-50 rounded-xl" onClick={() => setIsMenuOpen(false)}>Support</a>
+
+                            {/* Categories inside Mobile Menu */}
+                            {categories && setActiveCategory && getCategoryMetadata && (
+                                <div className="border-t border-slate-100 mt-2 pt-4">
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 px-3">Categories</span>
+                                    <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto no-scrollbar p-1">
+                                        {categories.map((cat) => {
+                                            const { label, emoji } = getCategoryMetadata(cat);
+                                            const isActive = activeCategory === cat;
+                                            return (
+                                                <button
+                                                    key={cat}
+                                                    onClick={() => {
+                                                        setActiveCategory(cat);
+                                                        setIsMenuOpen(false);
+                                                        const catalogEl = document.getElementById('catalog');
+                                                        if (catalogEl) {
+                                                            catalogEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                        }
+                                                    }}
+                                                    className={`px-3 py-2 rounded-xl text-xs font-bold text-left flex items-center gap-2 border transition-all ${
+                                                        isActive
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                            : 'bg-white text-slate-600 border-slate-100 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    <span className="text-sm shrink-0">{emoji}</span>
+                                                    <span className="truncate">{label}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Mobile auth controls */}
                             <div className="border-t border-slate-100 mt-2 pt-4">

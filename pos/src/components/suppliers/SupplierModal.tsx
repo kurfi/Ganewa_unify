@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../../contexts/ToastContext';
 import { X } from 'lucide-react';
-import { db } from '../../db/db';
+import { suppliersRepo } from '../../repositories';
 import { Supplier } from '../../types';
 import { validateNigerianPhone } from '../../utils/validation';
 
@@ -20,6 +20,7 @@ export function SupplierModal({ isOpen, onClose, supplier }: SupplierModalProps)
         email: '',
         address: ''
     });
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
         if (supplier) {
@@ -43,6 +44,8 @@ export function SupplierModal({ isOpen, onClose, supplier }: SupplierModalProps)
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (isSubmitting) return;
 
         if (!formData.companyName?.trim()) {
             showToast('Company name is required', 'error');
@@ -58,24 +61,28 @@ export function SupplierModal({ isOpen, onClose, supplier }: SupplierModalProps)
             return;
         }
 
+        setIsSubmitting(true);
+
         try {
             if (supplier) {
-                await db.suppliers.update(supplier.id!, {
+                await suppliersRepo.update(supplier.id!, {
                     ...formData,
                     updated_at: new Date().toISOString()
                 });
             } else {
-                await db.suppliers.add({
+                await suppliersRepo.create({
                     ...formData,
                     balance: 0,
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString()
-                } as Supplier);
+                } as Omit<Supplier, 'id'>);
             }
             onClose();
         } catch (error) {
             console.error('Error saving supplier:', error);
             showToast('Failed to save supplier', 'error');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -151,15 +158,17 @@ export function SupplierModal({ isOpen, onClose, supplier }: SupplierModalProps)
                         <button
                             type="button"
                             onClick={onClose}
-                            className="flex-1 py-2.5 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors"
+                            disabled={isSubmitting}
+                            className="flex-1 py-2.5 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
                         >
                             Cancel
                         </button>
                         <button
                             type="submit"
-                            className="flex-1 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors"
+                            disabled={isSubmitting}
+                            className="flex-1 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
                         >
-                            Save Supplier
+                            {isSubmitting ? 'Saving...' : 'Save Supplier'}
                         </button>
                     </div>
                 </form>

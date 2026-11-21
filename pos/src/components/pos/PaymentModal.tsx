@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Loader2, Banknote, CreditCard, Smartphone, Layers, Plus, FileText, Receipt, Info } from 'lucide-react';
 import { PaymentMethod, Customer } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
+import { useModalRegistration } from '../../contexts/ModalContext';
 import { validateNumericField } from '../../utils/validation';
 
 interface PaymentModalProps {
@@ -24,8 +25,11 @@ export function PaymentModal({
     multipayEntries, setMultipayEntries, calculateTotal, discount, selectedCustomer,
     isProcessing, handleCheckout, isAdmin
 }: PaymentModalProps) {
+    useModalRegistration(isPaymentModalOpen);
     const { showToast } = useToast();
     const [amountPaidStr, setAmountPaidStr] = useState<string>('');
+    const [multipayMethod, setMultipayMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
+    const [multipayAmountStr, setMultipayAmountStr] = useState<string>('');
 
     const totalDue = Math.max(0, calculateTotal() - discount);
 
@@ -40,9 +44,10 @@ export function PaymentModal({
     const amountPaid = parseFloat(amountPaidStr) || 0;
     const debtRemainder = Math.max(0, totalDue - amountPaid);
     const isPartial = debtRemainder > 0.01;
+    const changeDue = Math.max(0, amountPaid - totalDue);
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 md:p-4 no-print">
+        <div role="dialog" aria-modal="true" data-modal="true" className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 md:p-4 no-print">
             <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl p-4 md:p-6 overflow-y-auto max-h-[90vh]">
                 <div className="flex justify-between items-center mb-4 md:mb-6">
                     <h2 className="text-xl md:text-2xl font-bold text-slate-900">Complete Payment</h2>
@@ -68,16 +73,25 @@ export function PaymentModal({
                                 step="0.01"
                                 value={amountPaidStr}
                                 onChange={(e) => setAmountPaidStr(e.target.value)}
-                                disabled={!selectedCustomer || isProcessing}
+                                disabled={isProcessing}
                                 className={`w-full p-3 pl-10 text-lg font-bold rounded-lg border outline-none transition-all ${
-                                    (!selectedCustomer) ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed' : 'border-emerald-200 focus:ring-2 focus:ring-emerald-500 text-slate-800'
+                                    isProcessing ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed' : 'border-emerald-200 focus:ring-2 focus:ring-emerald-500 text-slate-800'
                                 }`}
                                 placeholder="0.00"
                             />
                             <Banknote className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                         </div>
                         
-                        {!selectedCustomer ? (
+                        {changeDue > 0.01 ? (
+                            <div className="mt-2 p-2 bg-emerald-50 rounded-lg border border-emerald-100 flex justify-between items-center animate-pulse">
+                                <span className="text-xs font-bold text-emerald-800 flex items-center gap-1">
+                                    <Info className="w-4 h-4 text-emerald-600" /> Change Due:
+                                </span>
+                                <span className="text-lg font-black text-emerald-600">
+                                    ₦{changeDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                            </div>
+                        ) : !selectedCustomer ? (
                             <p className="text-[10px] md:text-xs text-orange-500 mt-2 flex items-center gap-1 font-medium">
                                 <Info className="w-3 h-3" /> Select a customer to enable partial payments
                             </p>
@@ -149,38 +163,48 @@ export function PaymentModal({
                     </div>
                 ) : (
                     <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-                        <form onSubmit={(e) => {
-                            e.preventDefault();
-                            const form = e.target as HTMLFormElement;
-                            const amountStr = (form.elements.namedItem('amount') as HTMLInputElement).value;
-                            const amountNum = parseFloat(amountStr);
-                            const method = (form.elements.namedItem('method') as HTMLSelectElement).value as PaymentMethod;
+                        <div className="flex flex-col md:flex-row gap-2">
+                            <select
+                                value={multipayMethod}
+                                onChange={(e) => setMultipayMethod(e.target.value as PaymentMethod)}
+                                className="flex-1 p-2 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                            >
+                                <option value={PaymentMethod.CASH}>Cash</option>
+                                <option value={PaymentMethod.CARD}>POS / Card</option>
+                                <option value={PaymentMethod.TRANSFER}>Transfer</option>
+                            </select>
+                            <div className="flex flex-1 gap-2">
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder="Amount"
+                                    value={multipayAmountStr}
+                                    onChange={(e) => setMultipayAmountStr(e.target.value)}
+                                    className="flex-1 p-2 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none w-full"
+                                />
+                                <button
+                                    onClick={() => {
+                                        const amountNum = parseFloat(multipayAmountStr);
 
-                            if (!validateNumericField(amountNum, 'Amount', 0.01, showToast)) return;
+                                        if (!validateNumericField(amountNum, 'Amount', 0.01, showToast)) return;
 
-                            const alreadyPaid = multipayEntries.reduce((acc, e) => acc + parseFloat(e.amount || '0'), 0);
-                            const remaining = totalDue - alreadyPaid;
+                                        const alreadyPaid = multipayEntries.reduce((acc, e) => acc + parseFloat(e.amount || '0'), 0);
+                                        const remaining = totalDue - alreadyPaid;
 
-                            if (amountNum > remaining + 0.01) {
-                                showToast(`Amount cannot exceed remaining balance (₦${remaining.toLocaleString()})`, 'error');
-                                return;
-                            }
+                                        if (amountNum > remaining + 0.01) {
+                                            showToast(`Amount cannot exceed remaining balance (₦${remaining.toLocaleString()})`, 'error');
+                                            return;
+                                        }
 
-                            setMultipayEntries([...multipayEntries, { method, amount: amountStr }]);
-                            form.reset();
-                        }}>
-                            <div className="flex flex-col md:flex-row gap-2">
-                                <select name="method" className="flex-1 p-2 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
-                                    <option value={PaymentMethod.CASH}>Cash</option>
-                                    <option value={PaymentMethod.CARD}>POS / Card</option>
-                                    <option value={PaymentMethod.TRANSFER}>Transfer</option>
-                                </select>
-                                <div className="flex flex-1 gap-2">
-                                    <input name="amount" type="number" step="0.01" placeholder="Amount" className="flex-1 p-2 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none w-full" />
-                                    <button type="submit" className="p-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 shrink-0"><Plus className="w-5 h-5" /></button>
-                                </div>
+                                        setMultipayEntries([...multipayEntries, { method: multipayMethod, amount: multipayAmountStr }]);
+                                        setMultipayAmountStr('');
+                                    }}
+                                    className="p-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 shrink-0"
+                                >
+                                    <Plus className="w-5 h-5" />
+                                </button>
                             </div>
-                        </form>
+                        </div>
                         <div className="space-y-2">
                             {multipayEntries?.map((entry, index) => (
                                 <div key={index} className="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">

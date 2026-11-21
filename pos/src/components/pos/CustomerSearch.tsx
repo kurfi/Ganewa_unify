@@ -8,6 +8,15 @@ interface CustomerSearchProps {
     setSelectedCustomer: (customer: Customer | null) => void;
 }
 
+const getCustomerDisplayName = (customer: Customer | null | undefined): string => {
+    if (!customer) return '';
+    const trimmed = customer.name?.trim();
+    if (trimmed) return trimmed;
+    if (customer.phone?.trim()) return `Customer (${customer.phone.trim()})`;
+    if (customer.email?.trim()) return customer.email.trim();
+    return 'Unnamed Customer';
+};
+
 export function CustomerSearch({
     customers,
     selectedCustomer,
@@ -20,10 +29,16 @@ export function CustomerSearch({
 
     // Filter customers based on search query
     const filteredCustomers = customers?.filter(c => {
-        const nameMatch = (c.name || '').toLowerCase().includes((searchQuery || '').toLowerCase());
-        const phoneMatch = (c.phone || '').includes(searchQuery || '');
-        return nameMatch || phoneMatch;
-    }).sort((a, b) => (a.name || '').localeCompare(b.name || '')) || [];
+        if (!c.name || c.name.trim() === '') return false;
+        const queryLower = (searchQuery || '').toLowerCase().trim();
+        if (!queryLower) return true;
+        const nameMatch = c.name.toLowerCase().includes(queryLower);
+        const phoneMatch = (c.phone || '').includes(queryLower);
+        const emailMatch = (c.email || '').toLowerCase().includes(queryLower);
+        return nameMatch || phoneMatch || emailMatch;
+    }).sort((a, b) => {
+        return (a.name || '').localeCompare(b.name || '');
+    }) || [];
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -39,13 +54,13 @@ export function CustomerSearch({
     // Synchronize searchQuery with selectedCustomer when dropdown is closed
     useEffect(() => {
         if (!isOpen) {
-            setSearchQuery(selectedCustomer?.name || '');
+            setSearchQuery(selectedCustomer ? getCustomerDisplayName(selectedCustomer) : '');
         }
     }, [isOpen, selectedCustomer]);
 
     const handleSelect = (customer: Customer | null) => {
         setSelectedCustomer(customer);
-        setSearchQuery(customer ? customer.name : '');
+        setSearchQuery(customer ? getCustomerDisplayName(customer) : '');
         setIsOpen(false);
     };
 
@@ -77,7 +92,7 @@ export function CustomerSearch({
                     type="text"
                     className="w-full pl-10 pr-10 py-2 rounded-lg border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all placeholder:text-slate-400"
                     placeholder="Search customer..."
-                    value={isOpen ? searchQuery : (selectedCustomer ? selectedCustomer.name : 'Walk-in Customer')}
+                    value={isOpen ? searchQuery : (selectedCustomer ? getCustomerDisplayName(selectedCustomer) : 'Walk-in Customer')}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onFocus={() => setIsOpen(true)}
                 />
@@ -116,7 +131,7 @@ export function CustomerSearch({
                                         ${selectedCustomer?.id === customer.id ? 'bg-emerald-50 text-emerald-700 font-medium' : 'hover:bg-slate-50 text-slate-700'}`}
                                 >
                                     <div className="flex justify-between items-center w-full min-w-0">
-                                        <span className="truncate">{customer.name}</span>
+                                        <span className="truncate">{getCustomerDisplayName(customer)}</span>
                                         {selectedCustomer?.id === customer.id && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 ml-2" />}
                                     </div>
                                     {customer.currentDebt > 0 && (

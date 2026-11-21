@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 :root {
   /* Brand & Semantic Colors */
   --white: #ffffff;
@@ -174,14 +178,15 @@
   --pink-900: #702459;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-app: #0f172a;
-    --bg-card: #1e293b;
-    --text-main: #f8fafc;
-    --text-muted: #94a3b8;
-    --border-subtle: #334155;
-  }
+/* App UI is designed as a clean light theme (white/slate cards).
+   Ensure text color remains dark slate even if the OS/browser prefers dark mode,
+   preventing invisible white-on-white text across tables and cards. */
+:root {
+  --bg-app: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --border-subtle: #e2e8f0;
 }
 
 @media (forced-colors: active) {
@@ -202,9 +207,8 @@
 }
 
 body {
-  background-color: var(--bg-app);
-  color: var(--text-main);
-  transition: background-color 0.3s ease, color 0.3s ease;
+  background-color: #f8fafc;
+  color: #1e293b;
 }
 
 /* Global input text visibility safeguard */
@@ -232,18 +236,8 @@ input::placeholder, textarea::placeholder {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
-@media print {
-  .no-print {
-    display: none !important;
-  }
-  .print-only {
-    display: block !important;
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-  }
-}
+/* Print styles are defined in print.css */
+
 
 /* --- Tiered Responsive Architecture --- */
 

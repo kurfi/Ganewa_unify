@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { db } from '../db/db';
+import { useMemo, useState } from 'react';
 import { Supplier } from '../types';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { usePaginatedCollection } from '../hooks/usePaginatedCollection';
+import { suppliersRepo } from '../repositories';
 import { useDialog } from '../contexts/DialogContext';
 import { useToast } from '../contexts/ToastContext';
 
@@ -11,27 +11,28 @@ export function useSuppliers() {
     const [searchQuery, setSearchQuery] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
+    const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
     const [settleSupplier, setSettleSupplier] = useState<Supplier | null>(null);
+    const [historySupplier, setHistorySupplier] = useState<Supplier | null>(null);
 
-    const suppliers = useLiveQuery(
-        () => {
-            if (!searchQuery) return db.suppliers.toArray();
-            const term = (searchQuery || '').toLowerCase();
-            return db.suppliers
-                .filter(s =>
-                    (s.companyName || '').toLowerCase().includes(term) ||
-                    (s.contactName || '').toLowerCase().includes(term)
-                )
-                .toArray();
-        },
-        [searchQuery]
-    );
+    const { data: rawSuppliers, loading, hasMore, loadMore, loadingMore } = usePaginatedCollection<Supplier>({
+        collectionName: 'suppliers',
+        orderByField: 'companyName',
+        orderDirection: 'asc',
+        pageSize: 50,
+        searchTerm: searchQuery,
+        searchField: 'nameLower'
+    });
+
+    const suppliers = useMemo(() => {
+        return rawSuppliers;
+    }, [rawSuppliers]);
 
     const handleDelete = async (id: string) => {
         if (await confirm('Are you sure you want to delete this supplier?', { type: 'warning', confirmText: 'Delete Supplier' })) {
             try {
-                await db.suppliers.delete(id);
+                await suppliersRepo.delete(id);
                 showToast('Supplier deleted successfully', 'success');
             } catch (error) {
                 console.error('Error deleting supplier:', error);
@@ -55,6 +56,11 @@ export function useSuppliers() {
         setIsSettleModalOpen(true);
     };
 
+    const handleHistory = (supplier: Supplier) => {
+        setHistorySupplier(supplier);
+        setIsHistoryModalOpen(true);
+    };
+
     return {
         suppliers,
         searchQuery,
@@ -63,11 +69,16 @@ export function useSuppliers() {
         setIsModalOpen,
         isSettleModalOpen,
         setIsSettleModalOpen,
+        isHistoryModalOpen,
+        setIsHistoryModalOpen,
         editingSupplier,
         settleSupplier,
+        historySupplier,
+        loading, hasMore, loadMore, loadingMore,
         handleDelete,
         handleEdit,
         handleAdd,
-        handleSettle
+        handleSettle,
+        handleHistory
     };
 }

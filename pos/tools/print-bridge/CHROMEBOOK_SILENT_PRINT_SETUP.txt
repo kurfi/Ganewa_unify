@@ -1,0 +1,182 @@
+================================================================================
+          GANEWA POS - CHROMEBOOK SILENT THERMAL PRINT SETUP (XP-T80Q)
+================================================================================
+
+This guide configures 100% silent, zero-dialog receipt printing directly on your
+Chromebook for the Xprinter XP-T80Q (or any ESC/POS USB thermal printer).
+
+--------------------------------------------------------------------------------
+STEP 1: TURN ON LINUX ON YOUR CHROMEBOOK
+--------------------------------------------------------------------------------
+1. Open "Settings" on your Chromebook (click the clock on bottom right -> gear icon).
+2. On the left sidebar, click "Developers" (or "Advanced" -> "Developers").
+3. Beside "Linux development environment", click "Turn on".
+4. Click "Next", leave the default username and recommended disk size, and click "Install".
+   (This takes about 2 to 3 minutes).
+
+--------------------------------------------------------------------------------
+STEP 2: SHARE YOUR USB PRINTER WITH LINUX
+--------------------------------------------------------------------------------
+1. Connect your Xprinter XP-T80Q to the Chromebook using the USB cable and turn
+   the printer's power switch ON.
+2. In Chromebook "Settings", go to:
+   "Connected devices" -> "USB devices".
+3. Look for your USB Printer in the list.
+4. Turn the toggle ON next to your printer to "Share with Linux".
+   (Note: If you unplug and re-plug the printer later, ChromeOS may show a popup
+   asking "Share USB device with Linux?" - just click "Yes/Connect to Linux").
+
+--------------------------------------------------------------------------------
+STEP 3: AUTOMATED 1-COMMAND SETUP IN LINUX TERMINAL
+--------------------------------------------------------------------------------
+1. Open the "Terminal" app from your Chromebook app drawer (the black icon with `>_`).
+2. Copy and paste the entire block below into the terminal window and press ENTER:
+
+cat << 'EOF' > setup.sh
+#!/bin/bash
+set -e
+
+echo "=== Installing Node.js ==="
+sudo apt update && sudo apt install -y nodejs
+
+echo "=== Creating bridge.js ==="
+cat << 'INNER_EOF' > /home/$USER/bridge.js
+const http = require('http');
+const { spawn } = require('child_process');
+const fs = require('fs');
+
+const PORT = 9123;
+const PRINTER_NAME = process.env.PRINTER_NAME || 'Xprinter XP-80';
+
+const setCorsHeaders = (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+};
+
+const server = http.createServer((req, res) => {
+  setCorsHeaders(req, res);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', printer: PRINTER_NAME, port: PORT }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/print') {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+
+      let devicePath = null;
+      for (const candidate of ['/dev/usb/lp0', '/dev/usb/lp1', '/dev/lp0']) {
+        if (fs.existsSync(candidate)) {
+          devicePath = candidate;
+          break;
+        }
+      }
+
+      if (devicePath) {
+        try {
+          fs.writeFileSync(devicePath, buffer);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Printed directly to ' + devicePath }));
+          return;
+        } catch (writeErr) {
+          console.error('Direct write failed, falling back to lp:', writeErr);
+        }
+      }
+
+      const lpArgs = ['-o', 'raw'];
+      const child = spawn('lp', lpArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+      child.stdin.write(buffer);
+      child.stdin.end();
+
+      child.on('close', code => {
+        if (code === 0) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Printed via lp' }));
+        } else {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'lp failed with code ' + code }));
+        }
+      });
+
+      child.on('error', err => {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Print error: ' + err.message }));
+      });
+    });
+    return;
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Ganewa Print Bridge active on port ${PORT}`);
+});
+INNER_EOF
+
+echo "=== Setting up auto-start background service ==="
+mkdir -p /home/$USER/.config/systemd/user
+cat << 'SERVICE_EOF' > /home/$USER/.config/systemd/user/printbridge.service
+[Unit]
+Description=Ganewa Local Print Bridge
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /home/%u/bridge.js
+Restart=always
+
+[Install]
+WantedBy=default.target
+SERVICE_EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now printbridge
+
+echo "=== GANEWA PRINT BRIDGE SETUP COMPLETE! ==="
+echo "The bridge is now running in the background on port 9123."
+echo "It will automatically start every time your Chromebook turns on."
+EOF
+chmod +x setup.sh && ./setup.sh
+
+--------------------------------------------------------------------------------
+STEP 4: VERIFY IN GANEWA POS APP
+--------------------------------------------------------------------------------
+1. Open your Ganewa POS web app in Chrome on the Chromebook.
+2. Go to "Settings" -> "Hardware".
+3. Under "Alternative: Local / Network Print Bridge":
+   - Ensure the address is: http://127.0.0.1:9123
+   - Click the "Save" button (if not already saved).
+   - Click the Refresh (🔄) icon next to the status badge.
+   - You should see a green checkmark: "Ready (Xprinter XP-80)".
+4. Click "Test Direct Print (XP-80)".
+5. The receipt will print immediately with ZERO dialog and ZERO clicks!
+
+--------------------------------------------------------------------------------
+TROUBLESHOOTING CHECKS:
+--------------------------------------------------------------------------------
+- If test print shows "connection refused", verify the background service status:
+  In the Linux terminal, run:
+  systemctl --user status printbridge
+
+- To check that the USB printer is shared with Linux:
+  In the Linux terminal, run:
+  ls -l /dev/usb/lp*
+  (You should see /dev/usb/lp0).
+  If not seen, re-check Chromebook Settings -> Connected devices -> USB devices -> Share with Linux.
+
+- To restart the bridge manually:
+  systemctl --user restart printbridge
+================================================================================

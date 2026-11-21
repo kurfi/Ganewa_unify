@@ -10,14 +10,17 @@ interface ProductCardProps {
 
 export default function ProductCard({ product }: ProductCardProps) {
     const { addToCart, cart } = useCart();
-    const isInCart = cart.some(item => item.id === product.id);
+    const cartItem = cart.find(item => item.id === product.id);
+    const cartQty = cartItem?.quantity || 0;
+    const isInCart = cartQty > 0;
+    const isAtMax = cartQty >= (product.quantity || 0);
 
     return (
         <div
-            className="group relative cursor-pointer"
-            onClick={() => addToCart(product.id!)}
+            className={`group relative ${isAtMax ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+            onClick={() => { if (!isAtMax) addToCart(product.id!, product.quantity || 0); }}
         >
-            <div className="premium-card rounded-lg p-1.5 sm:p-2 flex flex-col h-full hover:border-emerald-500/50 group-active:scale-95 transition-all">
+            <div className={`premium-card rounded-lg p-1.5 sm:p-2 flex flex-col h-full hover:border-emerald-500/50 group-active:scale-95 transition-all ${isAtMax ? 'opacity-60' : ''}`}>
                 <div className="relative aspect-square rounded-lg bg-slate-50 mb-2 overflow-hidden flex items-center justify-center group-hover:bg-emerald-50/30 transition-colors">
                     {product.photo ? (
                         <img
@@ -33,11 +36,15 @@ export default function ProductCard({ product }: ProductCardProps) {
                         {product.category}
                     </span>
 
-                    {isInCart && (
+                    {isAtMax ? (
+                        <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-orange-500 text-white rounded-md text-[7px] font-black uppercase tracking-widest shadow-lg animate-in fade-in zoom-in duration-300">
+                            Max
+                        </div>
+                    ) : isInCart ? (
                         <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-emerald-500 text-white rounded-md text-[7px] font-black uppercase tracking-widest shadow-lg animate-in fade-in zoom-in duration-300">
                             Added
                         </div>
-                    )}
+                    ) : null}
                 </div>
 
                 <h3 className="font-bold text-xs sm:text-[13px] text-slate-900 mb-0.5 leading-tight group-hover:text-emerald-600 transition-colors truncate">{product.name}</h3>

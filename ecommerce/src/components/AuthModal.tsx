@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Eye, EyeOff, ShoppingBag, Loader2, AlertCircle, ArrowRight } from 'lucide-react';
+import { X, Eye, EyeOff, ShoppingBag, Loader2, AlertCircle, ArrowRight, Mail, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 
@@ -21,7 +21,7 @@ function getPasswordStrength(password: string): { level: number; label: string; 
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function AuthModal() {
-    const { authModal, openAuthModal, closeAuthModal, signInWithEmail, registerWithEmail } = useAuth();
+    const { authModal, openAuthModal, closeAuthModal, signInWithEmail, registerWithEmail, sendPasswordReset } = useAuth();
     const { open, mode } = authModal;
 
     const [email, setEmail] = useState('');
@@ -34,6 +34,13 @@ export default function AuthModal() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [visible, setVisible] = useState(false);
+
+    // Forgot-password view state
+    const [showForgot, setShowForgot] = useState(false);
+    const [forgotEmail, setForgotEmail] = useState('');
+    const [forgotLoading, setForgotLoading] = useState(false);
+    const [forgotError, setForgotError] = useState('');
+    const [forgotSent, setForgotSent] = useState(false);
 
     const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -58,6 +65,7 @@ export default function AuthModal() {
         setEmail(''); setPassword(''); setConfirmPassword('');
         setName(''); setPhone(''); setError('');
         setShowPassword(false); setShowConfirmPassword(false);
+        setShowForgot(false); setForgotEmail(''); setForgotError(''); setForgotSent(false);
     };
 
     const switchMode = (m: 'login' | 'register') => {
@@ -109,6 +117,27 @@ export default function AuthModal() {
         }
     };
 
+    const handleForgotPassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setForgotError('');
+        if (!forgotEmail.trim()) { setForgotError('Please enter your email address.'); return; }
+        setForgotLoading(true);
+        try {
+            await sendPasswordReset(forgotEmail.trim());
+            setForgotSent(true);
+        } catch (err: any) {
+            console.error('[ForgotPassword Error]:', err);
+            const map: Record<string, string> = {
+                'auth/user-not-found': 'No account found with this email address.',
+                'auth/invalid-email': 'Please enter a valid email address.',
+                'auth/too-many-requests': 'Too many attempts. Please wait a moment before trying again.',
+            };
+            setForgotError(map[err.code] || err.message || 'Failed to send reset email. Please try again.');
+        } finally {
+            setForgotLoading(false);
+        }
+    };
+
     if (!open) return null;
 
     return (
@@ -152,24 +181,114 @@ export default function AuthModal() {
                     </button>
                 </div>
 
-                {/* Tab Switcher */}
-                <div className="flex mx-6 mt-4 bg-slate-100 rounded-2xl p-1">
-                    <button
-                        onClick={() => switchMode('login')}
-                        className={`flex-1 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-widest transition-all ${mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
-                    >
-                        Sign In
-                    </button>
-                    <button
-                        onClick={() => switchMode('register')}
-                        className={`flex-1 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-widest transition-all ${mode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
-                    >
-                        Create Account
-                    </button>
-                </div>
+                {/* Tab Switcher — hidden when forgot view is active */}
+                {!showForgot && (
+                    <div className="flex mx-6 mt-4 bg-slate-100 rounded-2xl p-1">
+                        <button
+                            onClick={() => switchMode('login')}
+                            className={`flex-1 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-widest transition-all ${mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
+                        >
+                            Sign In
+                        </button>
+                        <button
+                            onClick={() => switchMode('register')}
+                            className={`flex-1 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-widest transition-all ${mode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
+                        >
+                            Create Account
+                        </button>
+                    </div>
+                )}
 
                 {/* Scrollable Body */}
                 <div className="overflow-y-auto flex-1 px-6 pt-6 pb-8">
+
+                    {/* ── Forgot Password Panel ── */}
+                    {showForgot ? (
+                        <div className="animate-in fade-in slide-in-from-right-4 duration-200">
+                            {forgotSent ? (
+                                /* Success Screen */
+                                <div className="flex flex-col items-center text-center py-6 gap-4">
+                                    <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center">
+                                        <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-black text-slate-950 mb-1">Check your inbox</h2>
+                                        <p className="text-sm text-slate-500 leading-relaxed">
+                                            We sent a password reset link to{' '}
+                                            <span className="font-bold text-slate-800">{forgotEmail}</span>.
+                                            Check your spam folder if you don't see it.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setShowForgot(false); setForgotSent(false); }}
+                                        className="mt-2 w-full py-3.5 bg-slate-950 text-white rounded-2xl font-black uppercase text-[12px] tracking-[0.2em] hover:bg-emerald-600 transition-all"
+                                    >
+                                        Back to Sign In
+                                    </button>
+                                </div>
+                            ) : (
+                                /* Email Entry Form */
+                                <>
+                                    <div className="mb-6">
+                                        <h2 className="text-2xl font-black text-slate-950">Reset password</h2>
+                                        <p className="text-slate-400 text-sm mt-1">
+                                            Enter your email and we'll send you a reset link.
+                                        </p>
+                                    </div>
+
+                                    {forgotError && (
+                                        <div className="flex items-start gap-2.5 bg-red-50 border border-red-100 text-red-600 rounded-2xl px-4 py-3 mb-4">
+                                            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                            <span className="text-xs font-semibold leading-relaxed">{forgotError}</span>
+                                        </div>
+                                    )}
+
+                                    <form onSubmit={handleForgotPassword} className="space-y-4">
+                                        <div>
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Email Address</label>
+                                            <div className="relative">
+                                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                                                <input
+                                                    type="email"
+                                                    value={forgotEmail}
+                                                    onChange={e => setForgotEmail(e.target.value)}
+                                                    placeholder="you@example.com"
+                                                    autoFocus
+                                                    required
+                                                    className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-900 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="submit"
+                                            disabled={forgotLoading}
+                                            className="w-full py-4 bg-slate-950 text-white rounded-2xl font-black uppercase text-[12px] tracking-[0.2em] flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-xl shadow-slate-100"
+                                        >
+                                            {forgotLoading ? (
+                                                <Loader2 className="w-5 h-5 animate-spin" />
+                                            ) : (
+                                                <>
+                                                    Send Reset Link
+                                                    <ArrowRight className="w-4 h-4" />
+                                                </>
+                                            )}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowForgot(false)}
+                                            className="w-full py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-700 transition-colors"
+                                        >
+                                            ← Back to Sign In
+                                        </button>
+                                    </form>
+                                </>
+                            )}
+                        </div>
+                    ) : (
+                    <>
                     {/* Headline */}
                     <div className="mb-6">
                         <h2 className="text-2xl font-black text-slate-950">
@@ -296,7 +415,11 @@ export default function AuthModal() {
 
                         {mode === 'login' && (
                             <div className="text-right">
-                                <button type="button" className="text-[11px] font-black text-emerald-600 uppercase tracking-widest hover:text-emerald-700 transition-colors">
+                                <button
+                                    type="button"
+                                    onClick={() => { setShowForgot(true); setForgotEmail(email); setForgotError(''); setForgotSent(false); }}
+                                    className="text-[11px] font-black text-emerald-600 uppercase tracking-widest hover:text-emerald-700 transition-colors"
+                                >
                                     Forgot password?
                                 </button>
                             </div>
@@ -340,7 +463,10 @@ export default function AuthModal() {
                         <span className="text-slate-400">Terms of Service</span> and{' '}
                         <span className="text-slate-400">Privacy Policy</span>
                     </p>
+                    </>
+                    )}
                 </div>
+
             </div>
         </div>
     );

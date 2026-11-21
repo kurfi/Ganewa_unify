@@ -1,0 +1,4 @@
+# Project Rules
+
+- **No NPM Commands**: Do not run or suggest `npm` commands directly. Suggest them at the very end of the response for the user to check and report back.
+- **Short Answers**: Keep answers as short and concise as possible from now on, unless instructed otherwise.

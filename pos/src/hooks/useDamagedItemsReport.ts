@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react';
-import { db } from '../db/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { normalizeFirestoreDates } from '../firebase/firestoreHelpers';
+import { ReturnedItem, Product, User, Return } from '../types';
 import { Range } from 'react-date-range';
-import { format } from 'date-fns';
+import { startOfMonth, endOfDay } from 'date-fns';
 
 export function useDamagedItemsReport() {
     const [filters, setFilters] = useState({
@@ -15,16 +17,74 @@ export function useDamagedItemsReport() {
 
     const [dateRange, setDateRange] = useState<Range[]>([
         {
-            startDate: undefined,
-            endDate: undefined,
+            startDate: startOfMonth(new Date()),
+            endDate: endOfDay(new Date()),
             key: 'selection',
         },
     ]);
 
-    const allReturnedItems = useLiveQuery(() => db.returnedItems.where('restockStatus').equals('damaged').toArray(), []);
-    const allProducts = useLiveQuery(() => db.products.toArray(), []);
-    const allUsers = useLiveQuery(() => db.users.toArray(), []);
-    const allReturns = useLiveQuery(() => db.returns.toArray(), []);
+    const [rawReturnedItems, setRawReturnedItems] = useState<ReturnedItem[]>([]);
+    const [allProducts, setAllProducts] = useState<Product[]>([]);
+    const [allUsers, setAllUsers] = useState<User[]>([]);
+    const [allReturns, setAllReturns] = useState<Return[]>([]);
+    const [loading, setLoading] = useState(false);
+
+    const fetchReports = useCallback(async () => {
+        if (!dateRange[0]?.startDate || !dateRange[0]?.endDate) return;
+
+        setLoading(true);
+        try {
+            const startObj = dateRange[0].startDate;
+            const endObj = dateRange[0].endDate;
+            endObj.setHours(23, 59, 59, 999);
+            const startTimestamp = Timestamp.fromDate(startObj);
+            const endTimestamp = Timestamp.fromDate(endObj);
+
+            const fetchCol = async <T>(colName: string, dateField?: string) => {
+                let qConstraints = [where('deleted', '==', false)];
+                if (dateField) {
+                    qConstraints.push(where(dateField, '>=', startTimestamp));
+                    qConstraints.push(where(dateField, '<=', endTimestamp));
+                }
+                const q = query(collection(db, colName), ...qConstraints);
+                const snapshot = await getDocs(q);
+                return snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    const normalized = normalizeFirestoreDates<any>(data);
+                    return { ...normalized, id: doc.id } as T;
+                });
+            };
+
+            const [
+                returnedItemsData,
+                productsData,
+                usersData,
+                returnsData
+            ] = await Promise.all([
+                fetchCol<ReturnedItem>('returnedItems', 'returnDate'),
+                fetchCol<Product>('products'),
+                fetchCol<User>('users'),
+                fetchCol<Return>('returns', 'returnDate')
+            ]);
+
+            setRawReturnedItems(returnedItemsData);
+            setAllProducts(productsData);
+            setAllUsers(usersData);
+            setAllReturns(returnsData);
+        } catch (error) {
+            console.error('Failed to fetch damaged items data', error);
+        } finally {
+            setLoading(false);
+        }
+    }, [dateRange]);
+
+    useEffect(() => {
+        fetchReports();
+    }, [fetchReports]);
+
+    const allReturnedItems = useMemo(() => {
+        return rawReturnedItems.filter(item => item.restockStatus === 'damaged');
+    }, [rawReturnedItems]);
 
     const filteredDamagedItems = useMemo(() => {
         if (!allReturnedItems) return [];
@@ -32,10 +92,12 @@ export function useDamagedItemsReport() {
         let tempItems = allReturnedItems;
 
         if (dateRange[0]?.startDate && dateRange[0]?.endDate) {
-            const start = dateRange[0].startDate.setHours(0, 0, 0, 0);
-            const end = dateRange[0].endDate.setHours(23, 59, 59, 999);
+            const start = dateRange[0].startDate.getTime();
+            const end = dateRange[0].endDate.getTime();
 
-            const returnsInDateRange = allReturns?.filter(ret => ret.returnDate.getTime() >= start && ret.returnDate.getTime() <= end).map(ret => ret.id) || [];
+            const returnsInDateRange = allReturns
+                .filter(ret => ret.returnDate && new Date(ret.returnDate).getTime() >= start && new Date(ret.returnDate).getTime() <= end)
+                .map(ret => ret.id);
             tempItems = tempItems.filter(item => returnsInDateRange.includes(item.returnId));
         }
 
@@ -59,7 +121,9 @@ export function useDamagedItemsReport() {
         return tempItems.sort((a, b) => {
             const returnA = allReturns?.find(ret => ret.id === a.returnId);
             const returnB = allReturns?.find(ret => ret.id === b.returnId);
-            return (returnB?.returnDate?.getTime() || 0) - (returnA?.returnDate?.getTime() || 0);
+            const timeA = returnA?.returnDate ? new Date(returnA.returnDate).getTime() : 0;
+            const timeB = returnB?.returnDate ? new Date(returnB.returnDate).getTime() : 0;
+            return timeB - timeA;
         });
     }, [allReturnedItems, filters, dateRange, allReturns]);
 
@@ -76,6 +140,8 @@ export function useDamagedItemsReport() {
         allUsers,
         allReturns,
         filteredDamagedItems,
+        loading,
+        refresh: fetchReports,
         handleFilterChange
     };
 }

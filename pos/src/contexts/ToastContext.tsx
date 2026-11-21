@@ -1,5 +1,5 @@
 // contexts/ToastContext.tsx
-import React, { createContext, useState, useContext, ReactNode, useCallback } from 'react';
+import React, { createContext, useState, useContext, ReactNode, useCallback, useRef } from 'react';
 import Toast from '../components/Toast';
 
 interface ToastContextType {
@@ -14,30 +14,30 @@ interface ToastProviderProps {
 
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [toastTimeoutId, setToastTimeoutId] = useState<NodeJS.Timeout | null>(null);
+  const toastTimeoutId = useRef<NodeJS.Timeout | null>(null);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     // Clear any existing timeout to prevent multiple toasts overlapping
-    if (toastTimeoutId) {
-      clearTimeout(toastTimeoutId);
+    if (toastTimeoutId.current) {
+      clearTimeout(toastTimeoutId.current);
     }
 
     setToast({ message, type });
 
     const id = setTimeout(() => {
       setToast(null);
-      setToastTimeoutId(null);
+      toastTimeoutId.current = null;
     }, 3000); // Toast disappears after 3 seconds
-    setToastTimeoutId(id);
-  }, [toastTimeoutId]);
+    toastTimeoutId.current = id;
+  }, []);
 
   const closeToast = useCallback(() => {
-    if (toastTimeoutId) {
-      clearTimeout(toastTimeoutId);
-      setToastTimeoutId(null);
+    if (toastTimeoutId.current) {
+      clearTimeout(toastTimeoutId.current);
+      toastTimeoutId.current = null;
     }
     setToast(null);
-  }, [toastTimeoutId]);
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>

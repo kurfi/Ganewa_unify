@@ -44,7 +44,8 @@ export const deleteDocument = async (collectionName: string, id: string) => {
 
 export const getCollection = async (collectionName: string) => {
     const colRef = collection(db, collectionName);
-    const snapshot = await getDocs(colRef);
+    const q = query(colRef, limit(500));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 

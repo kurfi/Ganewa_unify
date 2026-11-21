@@ -1,9 +1,9 @@
 import React from 'react';
-import { PieChart as PieIcon, TrendingUp, Package, RotateCcw } from 'lucide-react';
+import { Calendar, PieChart as PieIcon, TrendingUp, Package, RotateCcw, ClipboardList, AlertTriangle } from 'lucide-react';
 
 interface ReportsTabsProps {
-    activeTab: 'overview' | 'sales' | 'inventory' | 'financials' | 'returnAnalytics';
-    setActiveTab: (tab: 'overview' | 'sales' | 'inventory' | 'financials' | 'returnAnalytics') => void;
+    activeTab: 'daily' | 'overview' | 'sales' | 'inventory' | 'financials' | 'returnAnalytics' | 'returnsLog' | 'damagedItems';
+    setActiveTab: (tab: 'daily' | 'overview' | 'sales' | 'inventory' | 'financials' | 'returnAnalytics' | 'returnsLog' | 'damagedItems') => void;
 }
 
 export function ReportsTabs({ activeTab, setActiveTab }: ReportsTabsProps) {
@@ -22,11 +22,15 @@ export function ReportsTabs({ activeTab, setActiveTab }: ReportsTabsProps) {
 
     return (
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3 md:pb-4">
+            <TabButton id="daily" label="Daily Report" icon={<Calendar className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
             <TabButton id="overview" label="Overview" icon={<PieIcon className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
             <TabButton id="sales" label="Sales" icon={<TrendingUp className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
             <TabButton id="inventory" label="Inventory" icon={<Package className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
             <TabButton id="financials" label="Financials" icon={<span className="w-3.5 h-3.5 md:w-4 md:h-4 flex items-center justify-center font-bold text-[10px] md:text-xs">₦</span>} />
-            <TabButton id="returnAnalytics" label="Returns" icon={<RotateCcw className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
+            <TabButton id="returnAnalytics" label="Returns Analytics" icon={<RotateCcw className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
+            <TabButton id="returnsLog" label="Returns Log" icon={<ClipboardList className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
+            <TabButton id="damagedItems" label="Damaged Items" icon={<AlertTriangle className="w-3.5 h-3.5 md:w-4 md:h-4" />} />
         </div>
     );
 }
+

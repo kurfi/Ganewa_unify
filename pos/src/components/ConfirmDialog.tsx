@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertCircle, HelpCircle, Info, CheckCircle2, X } from 'lucide-react';
+import { useModalRegistration } from '../contexts/ModalContext';
 
 export type DialogType = 'info' | 'confirm' | 'warning' | 'error' | 'success';
 
@@ -26,6 +27,8 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onCancel,
   showCancel = true,
 }) => {
+  useModalRegistration(isOpen);
+
   if (!isOpen) return null;
 
   const getIcon = () => {
@@ -59,7 +62,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div role="dialog" aria-modal="true" data-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="p-6">
           <div className="flex flex-col items-center text-center gap-4">

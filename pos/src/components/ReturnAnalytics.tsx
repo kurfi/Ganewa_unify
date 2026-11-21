@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../db/db';
-import { Return, ReturnedItem, Product, ReturnReason } from '../types';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { format, getMonth, getYear, parseISO } from 'date-fns';
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area } from 'recharts';
-import { Package, Repeat, DollarSign, BarChart as BarChartIcon } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { useCollection } from '../firebase/firestoreHelpers';
+import { Return, ReturnedItem, Product } from '../types';
+import { format, parseISO } from 'date-fns';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip as RechartsTooltip, YAxis, XAxis, CartesianGrid, AreaChart, Area } from 'recharts';
+import { Package, Repeat, DollarSign, BarChart as BarChartIcon, PieChart as PieChartIcon, AreaChart as AreaChartIcon } from 'lucide-react';
 
 const COLORS = [
   'var(--blue-500, #0088FE)', 
@@ -23,21 +22,19 @@ interface ReturnAnalyticsProps {
 }
 
 const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate }) => {
-  const allReturns = useLiveQuery(() => db.returns.toArray(), []);
-  const allReturnedItems = useLiveQuery(() => db.returnedItems.toArray(), []);
-  const allProducts = useLiveQuery(() => db.products.toArray(), []);
+  const { data: allReturns } = useCollection<Return>('returns');
+  const { data: allReturnedItems } = useCollection<ReturnedItem>('returnedItems');
+  const { data: allProducts } = useCollection<Product>('products');
 
   const filteredReturns = useMemo(() => {
     if (!allReturns) return [];
     const start = parseISO(startDate).setHours(0, 0, 0, 0);
     const end = parseISO(endDate).setHours(23, 59, 59, 999);
 
-    return allReturns.filter(
-      (ret) => {
-        const d = (ret.returnDate as any)?.toDate?.() ?? new Date(ret.returnDate);
-        return d.getTime() >= start && d.getTime() <= end;
-      }
-    );
+    return allReturns.filter((ret) => {
+      const d = ret.returnDate ? new Date(ret.returnDate) : new Date(0);
+      return d.getTime() >= start && d.getTime() <= end;
+    });
   }, [allReturns, startDate, endDate]);
 
   const filteredReturnedItems = useMemo(() => {
@@ -45,7 +42,6 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
     const returnIds = filteredReturns.map(ret => ret.id);
     return allReturnedItems.filter(item => returnIds.includes(item.returnId));
   }, [allReturnedItems, filteredReturns]);
-
 
   // 1. Return Reasons Breakdown
   const reasonsData = useMemo(() => {
@@ -58,7 +54,7 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
 
   // 2. Top Returned Products
   const topProductsData = useMemo(() => {
-    const productStats: { [productId: number]: { name: string; quantity: number; refundValue: number } } = {};
+    const productStats: { [productId: string]: { name: string; quantity: number; refundValue: number } } = {};
     filteredReturnedItems.forEach(item => {
       if (!productStats[item.productId]) {
         productStats[item.productId] = { name: item.productName, quantity: 0, refundValue: 0 };
@@ -71,14 +67,13 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
 
   // 3. Monthly Return Trends
   const monthlyTrendsData = useMemo(() => {
-    const monthlyData: { [key: string]: number } = {}; // Format: YYYY-MM
+    const monthlyData: { [key: string]: number } = {};
     filteredReturns.forEach(ret => {
-      const d = (ret.returnDate as any)?.toDate?.() ?? new Date(ret.returnDate);
+      const d = ret.returnDate ? new Date(ret.returnDate) : new Date();
       const monthKey = format(d, 'yyyy-MM');
       monthlyData[monthKey] = (monthlyData[monthKey] || 0) + (ret.totalRefundAmount || 0);
     });
 
-    // Ensure all months in range are present, even if no returns
     const allMonths: string[] = [];
     let current = parseISO(startDate);
     const end = parseISO(endDate);
@@ -86,10 +81,10 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
       allMonths.push(format(current, 'yyyy-MM'));
       current = new Date(current.setMonth(current.getMonth() + 1));
     }
-    const uniqueMonths = Array.from(new Set(allMonths)).sort(); // Ensure sorted and unique
+    const uniqueMonths = Array.from(new Set(allMonths)).sort();
 
     return uniqueMonths.map(month => ({
-      month: format(parseISO(month), 'MMM yyyy'),
+      month: format(parseISO(month + '-01'), 'MMM yyyy'),
       refundAmount: monthlyData[month] || 0
     }));
   }, [filteredReturns, startDate, endDate]);
@@ -109,7 +104,6 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
       { name: 'Damaged', value: counts.damaged },
     ];
   }, [filteredReturnedItems]);
-
 
   return (
     <div className="space-y-6">
@@ -156,9 +150,9 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><PieChart className="w-5 h-5 text-slate-500" /> Return Reasons Breakdown</h3>
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+          <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><PieChartIcon className="w-5 h-5 text-slate-500" /> Return Reasons Breakdown</h3>
+          <div className="h-72 w-full min-h-[280px]">
+            <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
               <PieChart>
                 <Pie
                   data={reasonsData}
@@ -183,8 +177,8 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><BarChartIcon className="w-5 h-5 text-slate-500" /> Damage vs Restock Ratio</h3>
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+          <div className="h-72 w-full min-h-[280px]">
+            <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
               <PieChart>
                 <Pie
                   data={restockStatusData}
@@ -210,9 +204,9 @@ const ReturnAnalytics: React.FC<ReturnAnalyticsProps> = ({ startDate, endDate })
 
       {/* Monthly Return Trends */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-        <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><AreaChart className="w-5 h-5 text-slate-500" /> Monthly Return Trends (Refund Amount)</h3>
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><AreaChartIcon className="w-5 h-5 text-slate-500" /> Monthly Return Trends (Refund Amount)</h3>
+        <div className="h-72 w-full min-h-[280px]">
+          <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
             <AreaChart data={monthlyTrendsData}
               margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
               <defs>

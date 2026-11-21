@@ -9,9 +9,9 @@ export interface CartItem {
 
 interface CartContextType {
     cart: CartItem[];
-    addToCart: (id: string) => void;
+    addToCart: (id: string, maxQuantity?: number) => void;
     removeFromCart: (id: string) => void;
-    updateQuantity: (id: string, quantity: number) => void;
+    updateQuantity: (id: string, quantity: number, maxQuantity?: number) => void;
     clearCart: () => void;
     totalItems: number;
 }
@@ -43,11 +43,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
         saveCart(cart);
     }, [cart]);
 
-    const addToCart = (id: string) => {
+    const addToCart = (id: string, maxQuantity?: number) => {
         setCart(prev => {
             const existing = prev.find(item => item.id === id);
             if (existing) {
+                // If maxQuantity is provided, cap at that limit
+                if (maxQuantity !== undefined && existing.quantity >= maxQuantity) {
+                    return prev; // Already at max — do nothing
+                }
                 return prev.map(item => item.id === id ? { ...item, quantity: item.quantity + 1 } : item);
+            }
+            // Don't add if max stock is 0
+            if (maxQuantity !== undefined && maxQuantity <= 0) {
+                return prev;
             }
             return [...prev, { id, quantity: 1 }];
         });
@@ -57,12 +65,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
         setCart(prev => prev.filter(item => item.id !== id));
     };
 
-    const updateQuantity = (id: string, quantity: number) => {
+    const updateQuantity = (id: string, quantity: number, maxQuantity?: number) => {
         if (quantity <= 0) {
             removeFromCart(id);
             return;
         }
-        setCart(prev => prev.map(item => item.id === id ? { ...item, quantity } : item));
+        // Cap at maxQuantity if provided
+        const clampedQty = maxQuantity !== undefined ? Math.min(quantity, maxQuantity) : quantity;
+        setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: clampedQty } : item));
     };
 
     const clearCart = () => {

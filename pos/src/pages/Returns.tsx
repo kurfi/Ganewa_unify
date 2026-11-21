@@ -13,7 +13,7 @@ const Returns: React.FC = () => {
   const { state, actions } = useReturns();
 
   return (
-    <div className="space-y-4 md:space-y-6 pb-10">
+    <div data-scanner-disabled="true" className="space-y-4 md:space-y-6 pb-10">
       <h1 className="text-xl md:text-2xl font-bold text-slate-800">Process Returns</h1>
 
       {/* Step 1: Search Sale */}
@@ -47,6 +47,8 @@ const Returns: React.FC = () => {
           returnReason={state.returnReason}
           refundMethod={state.refundMethod}
           totalRefundAmount={state.totalRefundAmount}
+          originalSale={state.originalSale}
+          customer={state.customer}
           setReturnReason={actions.setReturnReason}
           setRefundMethod={actions.setRefundMethod}
           setStep={actions.setStep}
@@ -63,6 +65,7 @@ const Returns: React.FC = () => {
           totalRefundAmount={state.totalRefundAmount}
           setStep={actions.setStep}
           handleProcessReturn={actions.handleProcessReturn}
+          isSubmitting={state.isSubmitting}
         />
       )}
 

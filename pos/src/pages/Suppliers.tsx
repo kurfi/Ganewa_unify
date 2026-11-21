@@ -10,6 +10,7 @@ import { useSuppliers } from '../hooks/useSuppliers';
 import { SupplierCard } from '../components/suppliers/SupplierCard';
 import { SupplierModal } from '../components/suppliers/SupplierModal';
 import { SettleSupplierDebtModal } from '../components/suppliers/SettleSupplierDebtModal';
+import { SupplierHistoryModal } from '../components/suppliers/SupplierHistoryModal';
 
 export default function Suppliers() {
     const {
@@ -20,12 +21,17 @@ export default function Suppliers() {
         setIsModalOpen,
         isSettleModalOpen,
         setIsSettleModalOpen,
+        isHistoryModalOpen,
+        setIsHistoryModalOpen,
         editingSupplier,
         settleSupplier,
+        historySupplier,
+        loading, hasMore, loadMore, loadingMore,
         handleDelete,
         handleEdit,
         handleAdd,
-        handleSettle
+        handleSettle,
+        handleHistory
     } = useSuppliers();
 
     return (
@@ -67,16 +73,35 @@ export default function Suppliers() {
                                 onEdit={handleEdit}
                                 onDelete={handleDelete}
                                 onSettle={handleSettle}
+                                onHistory={handleHistory}
                             />
                         ))}
 
-                        {suppliers?.length === 0 && (
+                        {suppliers?.length === 0 && !loading && (
                             <div className="col-span-full py-12 text-center text-slate-400">
                                 <Building className="w-12 h-12 mx-auto mb-2 opacity-20" />
                                 <p>No suppliers found</p>
                             </div>
                         )}
                     </div>
+
+                    {loading && (
+                        <div className="py-8 text-center text-slate-500">
+                            Loading suppliers...
+                        </div>
+                    )}
+
+                    {hasMore && (
+                        <div className="flex justify-center p-6">
+                            <button
+                                onClick={loadMore}
+                                disabled={loadingMore}
+                                className="px-6 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                            >
+                                {loadingMore ? 'Loading...' : 'Load More'}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -90,6 +115,12 @@ export default function Suppliers() {
                 isOpen={isSettleModalOpen}
                 onClose={() => setIsSettleModalOpen(false)}
                 supplier={settleSupplier}
+            />
+
+            <SupplierHistoryModal
+                isOpen={isHistoryModalOpen}
+                onClose={() => setIsHistoryModalOpen(false)}
+                supplier={historySupplier}
             />
         </div>
     );

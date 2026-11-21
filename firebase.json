@@ -1,0 +1,33 @@
+{
+  "functions": {
+    "source": "functions",
+    "codebase": "ganewa-pos-functions",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log"
+    ]
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "nam5",
+    "rules": "pos/firestore.rules",
+    "indexes": "pos/firestore.indexes.json"
+  },
+  "hosting": {
+    "site": "ganewa-provision-pos",
+    "public": "pos/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

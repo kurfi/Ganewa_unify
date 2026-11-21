@@ -7,6 +7,8 @@ import { FilePathConfig } from '../components/settings/FilePathConfig';
 import { HardwareConfig } from '../components/settings/HardwareConfig';
 import { UserManagement } from '../components/settings/UserManagement';
 import { SystemLogs } from '../components/settings/SystemLogs';
+import { EcommercePaymentConfig } from '../components/settings/EcommercePaymentConfig';
+import { DataRepair } from '../components/settings/DataRepair';
 
 const Settings: React.FC = () => {
   const { currentUser } = useAuth();
@@ -23,6 +25,8 @@ const Settings: React.FC = () => {
 
       {(currentUser?.role === UserRole.ADMIN || currentUser?.role === UserRole.SUPER_ADMIN) && (
         <>
+          <EcommercePaymentConfig />
+          <DataRepair />
           <UserManagement />
           <SystemLogs />
         </>

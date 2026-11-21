@@ -1,12 +1,12 @@
-import { useState } from 'react';
-import { db } from '../db/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import React, { useMemo, useState } from 'react';
+import { expensesRepo } from '../repositories';
+import { usePaginatedCollection } from '../hooks/usePaginatedCollection';
 import { useToast } from '../contexts/ToastContext';
-import { syncData } from '../services/syncService';
 import { validateNumericField } from '../utils/validation';
 import { computeBalances } from '../utils/computeBalances';
 import { roundTo2 } from '../utils/math';
-import { PaymentMethod } from '../types';
+import { Expense, PaymentMethod } from '../types';
+import { emitDashboardRefresh } from '../utils/dashboardRefreshSignal';
 
 export function useExpenses() {
     const { showToast } = useToast();
@@ -18,7 +18,14 @@ export function useExpenses() {
 
     const BANK_METHODS = [PaymentMethod.TRANSFER, PaymentMethod.CARD];
 
-    const expenses = useLiveQuery(() => db.expenses.orderBy('date').reverse().toArray());
+    const { data: rawExpenses, loading, hasMore, loadMore, loadingMore, refresh } = usePaginatedCollection<Expense>({
+        collectionName: 'expenses',
+        orderByField: 'date',
+        orderDirection: 'desc',
+        pageSize: 50
+    });
+
+    const expenses = rawExpenses;
 
     const addExpense = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -56,7 +63,7 @@ export function useExpenses() {
         }
 
         try {
-            await db.expenses.add({
+            await expensesRepo.create({
                 date: new Date(),
                 category,
                 amount: amountNum,
@@ -65,31 +72,36 @@ export function useExpenses() {
                 paymentMethod: status === 'PAID' ? paymentMethod : undefined,
                 // Pending expenses have no payment method — money hasn't left yet
             });
+            emitDashboardRefresh();
+            refresh();
             setAmount('');
             setNote('');
             setStatus('PAID');
             setPaymentMethod(PaymentMethod.CASH);
             showToast('Expense recorded successfully!', 'success');
 
-            syncData();
         } catch (error) {
             console.error("Failed to add expense:", error);
-            showToast('Failed to record expense locally.', 'error');
+            showToast('Failed to record expense.', 'error');
         }
     };
 
-    const toggleStatus = async (id: string, currentStatus: 'PAID' | 'PENDING') => {
+    const toggleStatus = async (id: string, currentStatus: 'PAID' | 'PENDING', targetMethod: PaymentMethod = PaymentMethod.CASH) => {
         const newStatus = currentStatus === 'PAID' ? 'PENDING' : 'PAID';
 
         if (newStatus === 'PAID') {
-            const expense = await db.expenses.get(id);
+            const expense = await expensesRepo.getById(id);
             if (expense) {
                 try {
-                    const { cashAtHand } = await computeBalances();
-                    if (expense.amount > cashAtHand) {
-                        const shortfall = roundTo2(expense.amount - cashAtHand);
+                    const { cashAtHand, moneyInBank } = await computeBalances();
+                    const isBank = BANK_METHODS.includes(targetMethod);
+                    const availableBalance = isBank ? moneyInBank : cashAtHand;
+                    const balanceLabel = isBank ? 'bank balance' : 'cash at hand';
+
+                    if (expense.amount > availableBalance) {
+                        const shortfall = roundTo2(expense.amount - availableBalance);
                         showToast(
-                            `Insufficient cash to mark as paid. Available: ₦${cashAtHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} — Shortfall: ₦${shortfall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                            `Insufficient ${balanceLabel} to mark as paid. Available: ₦${availableBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} — Shortfall: ₦${shortfall.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                             'error'
                         );
                         return;
@@ -98,10 +110,12 @@ export function useExpenses() {
                     console.warn('Balance check failed during toggle:', err);
                 }
             }
-            await db.expenses.update(id, { status: 'PAID', paymentMethod: PaymentMethod.CASH });
+            await expensesRepo.update(id, { status: 'PAID', paymentMethod: targetMethod });
         } else {
-            await db.expenses.update(id, { status: 'PENDING', paymentMethod: undefined });
+            await expensesRepo.update(id, { status: 'PENDING', paymentMethod: undefined });
         }
+        emitDashboardRefresh();
+        refresh();
     };
 
     return {
@@ -111,6 +125,7 @@ export function useExpenses() {
         status, setStatus,
         paymentMethod, setPaymentMethod,
         expenses,
+        loading, hasMore, loadMore, loadingMore,
         addExpense,
         toggleStatus
     };

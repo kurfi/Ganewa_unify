@@ -1,23 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { CloudOff, RefreshCw, Wifi, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useSync } from '../contexts/SyncContext';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/db';
 
 const OfflineIndicator: React.FC = () => {
     const { syncStatus } = useSync();
     const [isVisible, setIsVisible] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
 
-    // Count pending items in sync queue
-    const pendingCount = useLiveQuery(
-        () => db.syncQueue.where('status').equals('pending').count(),
-        []
-    ) ?? 0;
-
-    // Monitor for back-online transition
+    // Show indicator on offline, error or any syncing activity
     useEffect(() => {
-        if (syncStatus === 'offline' || syncStatus === 'error' || (syncStatus === 'syncing' && pendingCount > 0)) {
+        if (syncStatus === 'offline' || syncStatus === 'error' || syncStatus === 'syncing') {
             setIsVisible(true);
             setShowSuccess(false);
         } else if (syncStatus === 'idle' && isVisible) {
@@ -29,7 +21,7 @@ const OfflineIndicator: React.FC = () => {
             }, 3000);
             return () => clearTimeout(timer);
         }
-    }, [syncStatus, pendingCount, isVisible]);
+    }, [syncStatus, isVisible]);
 
     if (!isVisible && !showSuccess) return null;
 
@@ -62,11 +54,11 @@ const OfflineIndicator: React.FC = () => {
                     <span className="text-[10px] font-bold opacity-80 leading-none">
                         {showSuccess
                             ? 'Local data is up to date'
-                            : pendingCount > 0
-                                ? `${pendingCount} item${pendingCount > 1 ? 's' : ''} waiting to sync`
-                                : syncStatus === 'offline'
-                                    ? 'Changes saved locally'
-                                    : 'Check connection'}
+                            : syncStatus === 'offline'
+                                ? 'Firestore cache active'
+                                : syncStatus === 'error'
+                                    ? 'Check connection'
+                                    : 'Please wait...'}
                     </span>
                 </div>
             </div>

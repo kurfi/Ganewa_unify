@@ -46,11 +46,15 @@ export interface User {
   password?: string;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface Customer {
   id?: string;
   name: string;
+  nameLower?: string;
   phone: string;
   email?: string;
   address?: string;
@@ -58,12 +62,23 @@ export interface Customer {
   currentDebt: number;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
+}
+
+export interface DiscountTier {
+  name: string;
+  minQuantity: number;
+  pricePerUnit: number;
 }
 
 export interface Product {
   id?: string;
   name: string;
+  nameLower?: string;
   category: string;
+  barcode?: string;          // Optional EAN/UPC/QR barcode string for scanner lookup
   buyPrice: number; // Cost price
   sellPrice: number; // Retail price
   wholesalePrice?: number;
@@ -71,8 +86,13 @@ export interface Product {
   minStockLevel: number;
   department?: string;
   photo?: string;
+  onlineDiscountTiers?: DiscountTier[];
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
+  stockValue?: number;
 }
 
 
@@ -102,25 +122,36 @@ export interface Sale {
   department?: string;
   cashier?: string; // Username
   invoiceNo?: string;
+  source?: 'pos' | 'online'; // Track whether sale originated from POS or online order fulfillment
+  onlineOrderId?: string;   // Reference to the original online order ID (e.g. GW-XXXXXX)
   debtInfo?: {
     previousDebt: number;
     thisSaleDebt: number;
     newDebt: number;
     creditLimit: number;
   };
+  amountPaid?: number;
+  changeDue?: number;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface CustomerPayment {
   id?: string;
   customerId: string;
+  customerName?: string;
   date: Date;
   amount: number;
   paymentMethod: PaymentMethod;
   note?: string;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface Expense {
@@ -134,6 +165,9 @@ export interface Expense {
   paymentMethod?: PaymentMethod; // CASH, TRANSFER, or CARD — undefined = legacy, treat as CASH
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 // --- New Entities for Provision Store ---
@@ -141,6 +175,7 @@ export interface Expense {
 export interface Supplier {
   id?: string;
   companyName: string;
+  nameLower?: string;
   contactName: string;
   phone: string;
   address: string;
@@ -148,6 +183,9 @@ export interface Supplier {
   balance?: number;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface PurchaseItem {
@@ -164,6 +202,8 @@ export interface Purchase {
   invoiceNo: string;
   supplierId: string;
   supplierName: string;
+  supplierNameLower?: string;
+  invoiceNoLower?: string;
   date: Date;
   items: PurchaseItem[];
   totalAmount: number;
@@ -172,18 +212,26 @@ export interface Purchase {
   status: 'PENDING' | 'PARTIAL' | 'PAID';
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface SupplierPayment {
   id?: string;
   supplierId: string;
   supplierName: string;
+  /** Set when this payment was created alongside a specific purchase (via NewPurchaseModal) */
+  purchaseId?: string;
   date: Date;
   amount: number;
   paymentMethod: PaymentMethod;
   note?: string;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface Department {
@@ -192,6 +240,9 @@ export interface Department {
   description?: string;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface BankAccount {
@@ -204,6 +255,9 @@ export interface BankAccount {
   active: boolean;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface CashBookEntry {
@@ -218,6 +272,9 @@ export interface CashBookEntry {
   username: string;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 // --- Returns & Audit ---
@@ -235,6 +292,9 @@ export interface Return {
   notes?: string;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface ReturnedItem {
@@ -247,8 +307,12 @@ export interface ReturnedItem {
   refundAmount: number;
   restockStatus: 'restocked' | 'damaged';
   valueLost?: number;
+  returnDate?: Date;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
 }
 
 export interface AuditLog {
@@ -259,15 +323,64 @@ export interface AuditLog {
   timestamp: Date;
   created_at?: string;
   updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
+}
+
+export interface StockWriteOff {
+  id?: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  reason: 'expired';
+  costImpact: number;
+  note?: string;
+  staffId: string;
+  staffName: string;
+  date: Date;
+  created_at?: string;
+  updated_at?: string;
+  deleted?: boolean;
 }
 
 export interface SyncEntry {
-  id?: number; // Local Dexie ID
-  table_name: string;
-  doc_id: string; // Firebase Document ID
-  action: 'create' | 'update' | 'delete';
-  payload?: any;
-  timestamp: Date;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  id?: number;
+  table: string;
+  recordId: string;
+  operation: 'create' | 'update' | 'delete';
+  status: 'pending' | 'processing' | 'failed';
+  retryCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+  deviceId: string;
   error?: string;
 }
+
+export interface SyncMetric {
+  id?: number;
+  timestamp: Date;
+  bytesUploaded: number;
+  itemsSynced: number;
+  latencyMs: number;
+  errorCount: number;
+}
+
+export interface SyncConflict {
+  id?: number;
+  table: string;
+  recordId: string;
+  localData: any;
+  remoteData: any;
+  resolvedInFavorOf: 'local' | 'remote';
+  timestamp: Date;
+}
+
+export interface SyncLog {
+  id?: number;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  details?: any;
+  timestamp: Date;
+}
+

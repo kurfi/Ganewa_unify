@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
+import './print.css';
 import App from './App';
 
 // Suppress specific verbose logs from external sources

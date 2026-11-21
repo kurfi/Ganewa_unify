@@ -38,3 +38,16 @@ Thumbs.db
 .vercel/
 **/.vercel/
 .eslintcache
+
+# Archives and local backups
+*.zip
+Current/
+firestore_export/
+firebase-export/
+**/firebase-export/
+scratch/
+**/scratch/
+
+# Android signing keys
+*.jks
+*.keystore

@@ -7,6 +7,18 @@ export enum PaymentMethod {
     MULTIPAY = 'MULTIPAY'
 }
 
+/**
+ * Credit info snapshot written by POS → shopUsers/{uid}.creditInfo
+ * Ecommerce reads this field; POS is the sole writer.
+ */
+export interface CreditInfo {
+    creditLimit: number;
+    currentDebt: number;
+    availableCredit: number;
+    updatedAt?: any;
+}
+
+
 export enum SaleStatus {
     COMPLETED = 'COMPLETED',
     HELD = 'HELD',
@@ -58,6 +70,12 @@ export interface Customer {
     updated_at?: string;
 }
 
+export interface DiscountTier {
+    name: string;
+    minQuantity: number;
+    pricePerUnit: number;
+}
+
 export interface Product {
     id?: string;
     name: string;
@@ -75,8 +93,10 @@ export interface Product {
     supplierId?: string;
     supplierName?: string;
     photo?: string;
+    onlineDiscountTiers?: DiscountTier[];
     created_at?: string;
     updated_at?: string;
+    stockValue?: number;
 }
 
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Upload, Download } from 'lucide-react';
-import { db } from '../../db/db';
+import { customersRepo } from '../../repositories';
 import { Customer } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { validateNigerianPhone } from '../../utils/validation';
@@ -67,7 +67,7 @@ export function BulkImportModal({ isOpen, onClose }: BulkImportModalProps) {
 
             if (customersToAdd.length > 0) {
                 try {
-                    await db.customers.bulkAdd(customersToAdd as Customer[]);
+                    await Promise.all(customersToAdd.map(c => customersRepo.create(c as Customer)));
                     let message = `Successfully imported ${customersToAdd.length} customers.`;
                     if (skippedRows > 0) message += ` (${skippedRows} rows skipped due to invalid data/phone format).`;
                     showToast(message, skippedRows > 0 ? 'info' : 'success');

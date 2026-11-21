@@ -16,31 +16,34 @@ export function DamagedItemsTable({ items, returns, users }: DamagedItemsTablePr
             </div>
             <div className="overflow-x-auto">
                 {/* Desktop Table View */}
-                <table className="hidden md:table min-w-full divide-y divide-slate-200 text-sm">
+                <table className="hidden md:table min-w-full divide-y divide-slate-200 text-sm text-slate-800">
                     <thead className="bg-slate-50">
                         <tr>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Return ID</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Product</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Qty Damaged</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Value Lost</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Date</th>
-                            <th className="px-4 py-2 text-left text-slate-500 uppercase tracking-wider">Staff</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Return ID</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Product</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Qty Damaged</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Value Lost</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Date</th>
+                            <th className="px-4 py-2 text-left text-slate-600 uppercase tracking-wider text-xs">Staff</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-slate-200">
+                    <tbody className="bg-white divide-y divide-slate-200 text-slate-800">
                         {items.length > 0 ? (
                             items.map(item => {
                                 const associatedReturn = returns?.find(ret => ret.id === item.returnId);
                                 const returnDate = associatedReturn ? format(associatedReturn.returnDate, 'MMM dd, yyyy HH:mm') : 'N/A';
                                 const staffName = users?.find(u => u.id === associatedReturn?.staffId)?.username || 'N/A';
+                                const itemName = item.productName || (item as any).name || 'Unknown Product';
                                 return (
                                     <tr key={item.id} className="hover:bg-slate-50">
-                                        <td className="px-4 py-2 whitespace-nowrap font-medium">#{item.returnId}</td>
-                                        <td className="px-4 py-2 whitespace-nowrap">{item.productName}</td>
-                                        <td className="px-4 py-2 whitespace-nowrap">{item.quantity}</td>
-                                        <td className="px-4 py-2 whitespace-nowrap font-bold text-red-600">₦{item.valueLost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</td>
-                                        <td className="px-4 py-2 whitespace-nowrap">{returnDate}</td>
-                                        <td className="px-4 py-2 whitespace-nowrap">{staffName}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap font-medium text-slate-500 text-xs">#{item.returnId}</td>
+                                        <td className="px-4 py-2 text-slate-800 font-medium text-sm">
+                                            <span className="font-semibold text-slate-800 block" title={itemName}>{itemName}</span>
+                                        </td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-slate-700 font-medium text-xs">{item.quantity}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap font-bold text-red-600 text-sm">₦{item.valueLost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-slate-700 text-xs">{returnDate}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-slate-600 text-xs">{staffName}</td>
                                     </tr>
                                 );
                             })

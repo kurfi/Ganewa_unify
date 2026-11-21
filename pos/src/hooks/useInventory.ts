@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { db, logAudit } from '../db/db';
+import { useMemo, useState } from 'react';
 import { Product, User } from '../types';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useToast } from '../contexts/ToastContext';
 import { useDialog } from '../contexts/DialogContext';
+import { logAudit } from '../firebase/firestoreHelpers';
+import { usePaginatedCollection } from '../hooks/usePaginatedCollection';
+import { productsRepo } from '../repositories';
+import { emitDashboardRefresh } from '../utils/dashboardRefreshSignal';
 
 export function useInventory(currentUser: User | null) {
     const { showToast } = useToast();
@@ -22,22 +24,23 @@ export function useInventory(currentUser: User | null) {
         minStockLevel: 10,
         department: '',
         wholesalePrice: 0,
-        photo: ''
+        photo: '',
+        onlineDiscountTiers: []
     });
 
-    const products = useLiveQuery(async () => {
-        let collection = db.products.orderBy('name');
-        if (searchTerm) {
-            const all = await collection.toArray();
-            const term = (searchTerm || '').toLowerCase();
-            return all.filter(p =>
-                ((p.name || '').toLowerCase().includes(term)) ||
-                ((p.category || '').toLowerCase().includes(term))
-            );
-        }
-        return collection.toArray();
-    }, [searchTerm]);
+    const { data: rawProducts, loading, hasMore, loadMore, loadingMore, refresh, updateItem, addItem, removeItem } = usePaginatedCollection<Product>({
+        collectionName: 'products',
+        orderByField: 'name',
+        orderDirection: 'asc',
+        pageSize: 50,
+        searchTerm: searchTerm,
+        searchField: 'nameLower'
+    });
 
+    const products = useMemo(() => {
+        // Exclude nameless records
+        return rawProducts.filter(p => !!(p.name || '').trim());
+    }, [rawProducts]);
 
     const handleOpenModal = (product?: Product) => {
         if (product && typeof product === 'object' && 'id' in product) {
@@ -54,7 +57,8 @@ export function useInventory(currentUser: User | null) {
                 minStockLevel: 10,
                 department: '',
                 wholesalePrice: 0,
-                photo: ''
+                photo: '',
+                onlineDiscountTiers: []
             });
         }
         setIsModalOpen(true);
@@ -62,14 +66,21 @@ export function useInventory(currentUser: User | null) {
 
     const handleDelete = async (product: Product) => {
         if (await confirm(`Are you sure you want to delete "${product.name}"?`, { type: 'warning', confirmText: 'Delete Product' })) {
-            try {
-                await db.products.delete(product.id!);
-                await logAudit('DELETE_PRODUCT', `Deleted product: ${product.name}`, currentUser?.username || 'Unknown');
-                showToast(`Product "${product.name}" deleted successfully`, 'success');
-            } catch (error) {
-                console.error('Failed to delete product:', error);
-                showToast('Failed to delete product', 'error');
-            }
+            const productId = product.id!;
+            // Optimistic removal for instant UI response
+            removeItem(productId);
+            showToast(`Product "${product.name}" deleted successfully`, 'success');
+
+            productsRepo.delete(productId)
+                .then(() => {
+                    emitDashboardRefresh();
+                    logAudit('DELETE_PRODUCT', `Deleted product: ${product.name}`, currentUser?.username || 'Unknown').catch(console.error);
+                })
+                .catch((error) => {
+                    console.error('Failed to delete product in database:', error);
+                    showToast('Failed to delete product from database.', 'error');
+                    refresh();
+                });
         }
     };
 
@@ -80,28 +91,71 @@ export function useInventory(currentUser: User | null) {
             return;
         }
 
-        try {
-            const productData = {
+        const computedStockValue = (Number(data.quantity) || 0) * (Number(data.buyPrice) || 0);
+
+        if (editingProduct) {
+            const productId = editingProduct.id!;
+            const updatedProduct = {
+                ...editingProduct,
                 ...data,
+                stockValue: computedStockValue,
                 updated_at: new Date().toISOString()
-            } as Product;
+            };
 
-            if (editingProduct) {
-                await db.products.update(editingProduct.id!, productData);
-                await logAudit('UPDATE_PRODUCT', `Updated product: ${productData.name}`, currentUser?.username || 'Unknown');
-                showToast('Product updated successfully', 'success');
-            } else {
-                productData.created_at = new Date().toISOString();
-                await db.products.add(productData);
-                await logAudit('CREATE_PRODUCT', `Created product: ${productData.name}`, currentUser?.username || 'Unknown');
-                showToast('Product added successfully', 'success');
-            }
-
+            // 1. Instant optimistic update & modal close (0ms delay)
+            updateItem(productId, updatedProduct);
             setIsModalOpen(false);
             setEditingProduct(null);
-        } catch (error) {
-            console.error('Failed to save product:', error);
-            showToast('Failed to save product. Please check your data and try again.', 'error');
+            showToast('Product updated successfully', 'success');
+
+            // 2. Persist in background
+            productsRepo.update(productId, { ...data, stockValue: computedStockValue })
+                .then(() => {
+                    emitDashboardRefresh();
+                    logAudit('UPDATE_PRODUCT', `Updated product: ${data.name}`, currentUser?.username || 'Unknown').catch(console.error);
+                })
+                .catch((error) => {
+                    console.error('Failed to update product in database:', error);
+                    showToast('Failed to save product changes to server.', 'error');
+                    refresh();
+                });
+        } else {
+            // New product creation
+            setIsModalOpen(false);
+            setEditingProduct(null);
+
+            try {
+                const newId = await productsRepo.create({
+                    ...data,
+                    stockValue: computedStockValue
+                } as Omit<Product, 'id' | 'deleted' | 'created_at' | 'updated_at'>);
+
+                const newProduct: Product = {
+                    id: newId,
+                    name: data.name || '',
+                    category: data.category || '',
+                    buyPrice: Number(data.buyPrice) || 0,
+                    sellPrice: Number(data.sellPrice) || 0,
+                    quantity: Number(data.quantity) || 0,
+                    stockValue: computedStockValue,
+                    minStockLevel: Number(data.minStockLevel) || 10,
+                    department: data.department || '',
+                    wholesalePrice: Number(data.wholesalePrice) || 0,
+                    photo: data.photo || '',
+                    onlineDiscountTiers: data.onlineDiscountTiers || [],
+                    deleted: false,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+
+                addItem(newProduct);
+                emitDashboardRefresh();
+                logAudit('CREATE_PRODUCT', `Created product: ${data.name}`, currentUser?.username || 'Unknown').catch(console.error);
+                showToast('Product added successfully', 'success');
+            } catch (error) {
+                console.error('Failed to save product:', error);
+                showToast('Failed to save product. Please check your data and try again.', 'error');
+            }
         }
     };
 
@@ -118,16 +172,13 @@ export function useInventory(currentUser: User | null) {
     };
 
     return {
-        isModalOpen,
-        setIsModalOpen,
-        isBulkModalOpen,
-        setIsBulkModalOpen,
-        searchTerm,
-        setSearchTerm,
-        editingProduct,
-        formData,
-        setFormData,
+        isModalOpen, setIsModalOpen,
+        isBulkModalOpen, setIsBulkModalOpen,
+        searchTerm, setSearchTerm,
+        editingProduct, setEditingProduct,
+        formData, setFormData,
         products,
+        loading, hasMore, loadMore, loadingMore,
         handleOpenModal,
         handleDelete,
         handleSubmit,

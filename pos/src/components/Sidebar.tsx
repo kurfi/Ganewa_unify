@@ -4,72 +4,18 @@ import { LayoutDashboard, ShoppingCart, Package, Users, Receipt, PieChart, Setti
 import { useAuth } from '../auth/AuthContext';
 import { UserRole } from '../types';
 import { useSync } from '../contexts/SyncContext';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db as firestoreDb } from '../firebase/config';
+import { useOnlineOrders } from '../contexts/OnlineOrdersContext';
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const playNotificationSound = () => {
-  try {
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator1 = audioCtx.createOscillator();
-    const oscillator2 = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-
-    oscillator1.connect(gainNode);
-    oscillator2.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-
-    oscillator1.type = 'sine';
-    oscillator1.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-    oscillator2.type = 'sine';
-    oscillator2.frequency.setValueAtTime(880.00, audioCtx.currentTime); // A5
-
-    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-    gainNode.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.05);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
-
-    oscillator1.start(audioCtx.currentTime);
-    oscillator2.start(audioCtx.currentTime);
-    oscillator1.stop(audioCtx.currentTime + 0.35);
-    oscillator2.stop(audioCtx.currentTime + 0.35);
-  } catch (err) {
-    console.warn('AudioContext failed to play sound:', err);
-  }
-};
-
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
   const { currentUser, logout } = useAuth();
   const { syncStatus } = useSync();
-
-  const [pendingCount, setPendingCount] = useState(0);
-  const prevCountRef = useRef(0);
-
-  useEffect(() => {
-    const colRef = collection(firestoreDb, 'orders');
-    const q = query(colRef, where('status', '==', 'pending'));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const count = snapshot.size;
-        if (count > prevCountRef.current) {
-          playNotificationSound();
-        }
-        setPendingCount(count);
-        prevCountRef.current = count;
-      },
-      (error) => {
-        console.error('Error listening to pending orders:', error);
-      }
-    );
-
-    return () => unsubscribe();
-  }, []);
+  const { pendingCount } = useOnlineOrders();
 
   const navItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard, roles: [UserRole.ADMIN, UserRole.CASHIER, UserRole.SUPER_ADMIN] },
@@ -81,7 +27,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { name: 'Customers', path: '/customers', icon: Users, roles: [UserRole.ADMIN, UserRole.CASHIER, UserRole.SUPER_ADMIN] },
     { name: 'Expenses', path: '/expenses', icon: Receipt, roles: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
     { name: 'Reports', path: '/reports', icon: PieChart, roles: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
-    { name: 'Returns', path: '/returns', icon: RotateCcw, roles: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
+    { name: 'Returns', path: '/returns', icon: RotateCcw, roles: [UserRole.ADMIN, UserRole.CASHIER, UserRole.SUPER_ADMIN] },
     { name: 'Settings', path: '/settings', icon: Settings, roles: [UserRole.ADMIN, UserRole.CASHIER, UserRole.SUPER_ADMIN] },
   ];
 

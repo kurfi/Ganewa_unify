@@ -1,14 +1,15 @@
 import React from 'react';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, Tag } from 'lucide-react';
 import { Product } from '../../types';
 
 interface InventoryMobileListProps {
     products: Product[] | undefined;
     handleOpenModal: (product?: Product) => void;
     handleDelete: (product: Product) => void;
+    handleOpenLabelModal?: (product: Product) => void;
 }
 
-export function InventoryMobileList({ products, handleOpenModal, handleDelete }: InventoryMobileListProps) {
+export function InventoryMobileList({ products, handleOpenModal, handleDelete, handleOpenLabelModal }: InventoryMobileListProps) {
     return (
         <div className="md:hidden grid grid-cols-1 gap-4 p-4 bg-slate-50/50">
             {products?.map(product => (
@@ -37,9 +38,19 @@ export function InventoryMobileList({ products, handleOpenModal, handleDelete }:
                         </div>
                     </div>
 
-                    <div className="flex justify-between items-center text-xs">
+                    <div className="flex justify-between items-center text-xs flex-wrap gap-2">
                         <span className="text-slate-500 font-medium">{product.category}</span>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center flex-wrap">
+                            {/* Labels button → opens modal for quantity selection */}
+                            {handleOpenLabelModal && (
+                                <button
+                                    onClick={() => handleOpenLabelModal(product)}
+                                    className="p-2 bg-amber-50 text-amber-600 rounded-lg font-bold flex items-center gap-1.5 hover:bg-amber-100 transition-colors"
+                                >
+                                    <Tag className="w-3.5 h-3.5" /> Labels
+                                </button>
+                            )}
+
                             <button
                                 onClick={() => handleOpenModal(product)}
                                 className="p-2 bg-blue-50 text-blue-600 rounded-lg font-bold flex items-center gap-1.5"

@@ -46,10 +46,11 @@ export function ReportsHeader({
             head: [['Metric', 'Value']],
             body: [
                 ['Total Sales', `N${(totalRevenue || 0).toLocaleString()}`],
-                ['Total Refunds', `N${(totalRefunds || 0).toLocaleString()}`],
-                ['Value Lost (Damaged)', `N${(totalValueLost || 0).toLocaleString()}`],
-                ['Cost of Goods Sold', `N${(totalCOGS || 0).toLocaleString()}`],
                 ['Total Expenses', `N${(totalExpenses || 0).toLocaleString()}`],
+                ['Total Refunds', `N${(totalRefunds || 0).toLocaleString()}`],
+                ['Remaining Balance', `N${((totalRevenue || 0) - (totalExpenses || 0) - (totalRefunds || 0)).toLocaleString()}`],
+                ['Cost of Goods Sold', `N${(totalCOGS || 0).toLocaleString()}`],
+                ['Value Lost (Damaged)', `N${(totalValueLost || 0).toLocaleString()}`],
                 ['Total Discounts', `N${(totalDiscounts || 0).toLocaleString()}`],
                 ['Gross Profit', `N${(grossProfit || 0).toLocaleString()}`],
                 ['Net Profit', `N${(netProfit || 0).toLocaleString()}`],
@@ -59,11 +60,12 @@ export function ReportsHeader({
             didParseCell: function (data) {
                 if (data.section === 'body' && data.column.index === 1) {
                     const metricName = data.row.cells[0].text[0];
-                    if (['Total Sales', 'Gross Profit'].includes(metricName)) {
+                    if (['Total Sales', 'Gross Profit', 'Remaining Balance'].includes(metricName)) {
                         data.cell.styles.textColor = [34, 139, 34];
+                        data.cell.styles.fontStyle = 'bold';
                     } else if (['Total Refunds', 'Cost of Goods Sold', 'Total Expenses', 'Total Discounts', 'Value Lost (Damaged)'].includes(metricName)) {
                         data.cell.styles.textColor = [220, 20, 60];
-                    } else if (metricName === 'Net Profit') {
+                    } else if (metricName.includes('Net Profit')) {
                         data.cell.styles.textColor = [0, 0, 0];
                         data.cell.styles.fontStyle = 'bold';
                     }

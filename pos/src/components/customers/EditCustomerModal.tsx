@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { db, logAudit } from '../../db/db';
+import { logAudit } from '../../firebase/firestoreHelpers';
+import { customersRepo } from '../../repositories';
 import { Customer } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -16,6 +17,7 @@ export function EditCustomerModal({ isOpen, onClose, customer }: EditCustomerMod
     const { currentUser } = useAuth();
     const { showToast } = useToast();
     const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
         if (customer) {
@@ -27,7 +29,7 @@ export function EditCustomerModal({ isOpen, onClose, customer }: EditCustomerMod
 
     const handleUpdateCustomer = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!editingCustomer.id) return;
+        if (!editingCustomer.id || isSubmitting) return;
 
         if (!editingCustomer.name?.trim()) {
             showToast('Customer name is required', 'error');
@@ -46,18 +48,22 @@ export function EditCustomerModal({ isOpen, onClose, customer }: EditCustomerMod
         if (!validateNumericField(editingCustomer.creditLimit || 0, 'Credit Limit', 0, showToast)) return;
         if (!validateNumericField(editingCustomer.currentDebt || 0, 'Current Debt', 0, showToast)) return;
 
+        setIsSubmitting(true);
+
         try {
             const oldDebt = customer?.currentDebt || 0;
             const newDebt = Number(editingCustomer.currentDebt) || 0;
             const debtDifference = newDebt - oldDebt;
 
-            await db.customers.update(editingCustomer.id, {
+            const updatedFields = {
                 name: editingCustomer.name.trim(),
                 phone: editingCustomer.phone.trim(),
                 email: editingCustomer.email?.trim() || '',
                 creditLimit: Number(editingCustomer.creditLimit) || 0,
                 currentDebt: newDebt,
-            });
+            };
+
+            await customersRepo.update(editingCustomer.id, updatedFields);
 
             if (debtDifference !== 0) {
                 await logAudit(
@@ -67,11 +73,20 @@ export function EditCustomerModal({ isOpen, onClose, customer }: EditCustomerMod
                 );
             }
 
+            // Sync updated credit info snapshot to ecommerce profile (non-blocking)
+            const { syncCreditInfoToShopUser } = await import('../../utils/creditInfoSync');
+            syncCreditInfoToShopUser({
+                ...editingCustomer,
+                ...updatedFields
+            });
+
             showToast('Customer updated successfully', 'success');
             onClose();
         } catch (error) {
             console.error("Failed to update customer:", error);
             showToast("Failed to update customer details.", 'error');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -132,8 +147,10 @@ export function EditCustomerModal({ isOpen, onClose, customer }: EditCustomerMod
                     </div>
 
                     <div className="flex justify-end gap-3 mt-6">
-                        <button type="button" onClick={onClose} className="px-4 py-2 text-xs md:text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 text-xs md:text-sm font-medium">Update Customer</button>
+                        <button type="button" onClick={onClose} disabled={isSubmitting} className="px-4 py-2 text-xs md:text-sm text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50">Cancel</button>
+                        <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 text-xs md:text-sm font-medium disabled:opacity-50">
+                            {isSubmitting ? 'Updating...' : 'Update Customer'}
+                        </button>
                     </div>
                 </form>
             </div>

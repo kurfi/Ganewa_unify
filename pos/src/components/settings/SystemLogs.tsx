@@ -1,17 +1,17 @@
-import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../db/db';
+import { useState, useMemo } from 'react';
+import { useCollection } from '../../firebase/firestoreHelpers';
+import { AuditLog } from '../../types';
 import { ClipboardList, Calendar, Download, Trash2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { savePdf } from '../../services/pdfService';
 import { useToast } from '../../contexts/ToastContext';
-import { clearAuditLogs } from '../../db/db';
 import ConfirmDialog from '../ConfirmDialog';
+import { auditLogsRepo } from '../../repositories';
 
 export function SystemLogs() {
-    const auditLogs = useLiveQuery(() => db.auditLogs.reverse().limit(50).toArray());
+    const { data: rawLogs } = useCollection<AuditLog>('auditLogs');
     const { showToast } = useToast();
 
     const [logStartDate, setLogStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
@@ -19,6 +19,16 @@ export function SystemLogs() {
     const [isExportingLogs, setIsExportingLogs] = useState(false);
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
     const [isClearing, setIsClearing] = useState(false);
+
+    const auditLogs = useMemo(() => {
+        return [...rawLogs]
+            .sort((a, b) => {
+                const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+                const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+                return timeB - timeA;
+            })
+            .slice(0, 50);
+    }, [rawLogs]);
 
     const exportAuditLogs = async () => {
         setIsExportingLogs(true);
@@ -28,13 +38,12 @@ export function SystemLogs() {
             const end = parseISO(logEndDate);
             end.setHours(23, 59, 59, 999);
 
-            const logs = await db.auditLogs
-                .where('timestamp')
-                .between(start, end)
-                .reverse()
-                .toArray();
+            const filteredLogs = rawLogs.filter(log => {
+                const time = log.timestamp ? new Date(log.timestamp).getTime() : 0;
+                return time >= start.getTime() && time <= end.getTime();
+            }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-            if (logs.length === 0) {
+            if (filteredLogs.length === 0) {
                 showToast('No logs found for the selected period.', 'info');
                 return;
             }
@@ -49,8 +58,8 @@ export function SystemLogs() {
             autoTable(doc, {
                 startY: 40,
                 head: [['Timestamp', 'Action', 'Details', 'User']],
-                body: logs.map(log => [
-                    format(log.timestamp, 'yyyy-MM-dd HH:mm:ss'),
+                body: filteredLogs.map(log => [
+                    format(new Date(log.timestamp), 'yyyy-MM-dd HH:mm:ss'),
                     log.action,
                     log.details,
                     log.user
@@ -79,7 +88,9 @@ export function SystemLogs() {
     const handleClearLogs = async () => {
         setIsClearing(true);
         try {
-            await clearAuditLogs();
+            // Soft delete visible logs
+            const deletePromises = rawLogs.map(log => log.id ? auditLogsRepo.delete(log.id) : Promise.resolve());
+            await Promise.all(deletePromises);
             showToast('System logs cleared successfully!', 'success');
             setIsClearConfirmOpen(false);
         } catch (error) {
@@ -160,7 +171,7 @@ export function SystemLogs() {
                         {auditLogs?.map(log => (
                             <tr key={log.id} className="hover:bg-slate-50 transition-colors">
                                 <td className="p-3 text-slate-500 whitespace-nowrap text-xs">
-                                    {format(log.timestamp, 'MMM dd, HH:mm:ss')}
+                                    {format(new Date(log.timestamp), 'MMM dd, HH:mm:ss')}
                                 </td>
                                 <td className="p-3 font-bold text-slate-700 text-xs capitalize">{log.action.replace('_', ' ')}</td>
                                 <td className="p-3 text-slate-600 text-xs max-w-xs truncate" title={log.details}>{log.details}</td>
@@ -181,7 +192,7 @@ export function SystemLogs() {
                 {auditLogs?.map(log => (
                     <div key={log.id} className="py-3 px-1">
                         <div className="flex justify-between items-start mb-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{format(log.timestamp, 'HH:mm:ss • MMM dd')}</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{format(new Date(log.timestamp), 'HH:mm:ss • MMM dd')}</span>
                             <span className="text-[10px] font-bold text-indigo-600">{log.user}</span>
                         </div>
                         <p className="text-xs font-black text-slate-800 mb-1">{log.action.replace('_', ' ')}</p>

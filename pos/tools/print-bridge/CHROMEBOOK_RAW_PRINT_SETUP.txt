@@ -1,0 +1,205 @@
+================================================================================
+     GANEWA POS - CHROMEBOOK RAW ESC/POS SILENT PRINT SETUP (XP-T80Q)
+================================================================================
+
+This guide configures DIRECT HARDWARE ESC/POS printing on your Chromebook.
+It produces:
+  ✔ Jet-black, bold, pixel-perfect hardware font (matches Windows exactly)
+  ✔ ZERO wasted blank paper at the top or bottom
+  ✔ Automatic paper cutting right after "Mun gode da kasuwancin ku!"
+  ✔ 100% silent printing with ZERO print dialogs
+
+--------------------------------------------------------------------------------
+STEP 1: CONFIRM PRINTER IS CONNECTED TO LINUX
+--------------------------------------------------------------------------------
+1. Plug your Xprinter XP-T80Q USB cable into the Chromebook.
+2. In Chrome, open:
+   chrome://os-settings/crostini/sharedUsbDevices
+3. Turn the toggle ON next to "USB Printer Port".
+   (If you unplug and re-plug, click "Connect to Linux" on the popup notification).
+
+--------------------------------------------------------------------------------
+STEP 2: RUN THE 1-COMMAND SETUP IN LINUX TERMINAL
+--------------------------------------------------------------------------------
+1. Open the "Terminal" app from your Chromebook app drawer.
+2. Copy and paste the entire block below into the terminal and press ENTER:
+
+cat << 'EOF' > install_printer.sh
+#!/bin/bash
+set -e
+
+echo "=== 1. Installing python3-usb ==="
+sudo apt update && sudo apt install -y python3-usb
+
+echo "=== 2. Creating Python Hardware Print Bridge ==="
+cat << 'PY_EOF' > /home/$USER/print_bridge.py
+import http.server
+import socketserver
+import usb.core
+import usb.util
+import json
+import sys
+
+PORT = 9123
+
+def get_printer():
+    # Find printer: ignore internal Linux root hubs (1d6b)
+    for dev in usb.core.find(find_all=True):
+        if dev.idVendor == 0x1d6b:
+            continue
+        return dev
+    return None
+
+def send_to_printer(data):
+    dev = get_printer()
+    if dev is None:
+        raise Exception("Printer not found! Ensure USB Printer Port is toggled ON in ChromeOS settings.")
+
+    try:
+        if dev.is_kernel_driver_active(0):
+            dev.detach_kernel_driver(0)
+    except Exception:
+        pass
+
+    dev.set_configuration()
+    cfg = dev.get_active_configuration()
+    intf = cfg[(0, 0)]
+
+    ep_out = None
+    for ep in intf:
+        if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_OUT:
+            ep_out = ep
+            break
+
+    if ep_out is None:
+        raise Exception("Could not find OUT endpoint on printer.")
+
+    # Write ESC/POS bytes to printhead
+    ep_out.write(data)
+
+class PrintHandler(http.server.BaseHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path == '/status':
+            dev = get_printer()
+            printer_name = "Xprinter XP-T80Q" if dev else "Printer Disconnected"
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            resp = json.dumps({"status": "ok", "printer": printer_name, "port": PORT})
+            self.wfile.write(resp.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/print':
+            content_length = int(self.headers.get('Content-Length', 0))
+            raw_data = self.rfile.read(content_length)
+
+            try:
+                send_to_printer(raw_data)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                resp = json.dumps({"success": True, "message": "Printed directly to Xprinter XP-T80Q"})
+                self.wfile.write(resp.encode('utf-8'))
+            except Exception as err:
+                print("Print error:", err)
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                resp = json.dumps({"success": False, "error": str(err)})
+                self.wfile.write(resp.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+
+print(f"Starting Ganewa Hardware Print Bridge on port {PORT}...")
+with ThreadingTCPServer(('0.0.0.0', PORT), PrintHandler) as httpd:
+    print(f"Ganewa Hardware Print Bridge running at http://0.0.0.0:{PORT}")
+    httpd.serve_forever()
+PY_EOF
+
+echo "=== 3. Setting up Auto-Start Background Service ==="
+mkdir -p /home/$USER/.config/systemd/user
+cat << 'SERVICE_EOF' > /home/$USER/.config/systemd/user/printbridge.service
+[Unit]
+Description=Ganewa Hardware Print Bridge
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/%u/print_bridge.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+SERVICE_EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now printbridge
+
+echo ""
+echo "============================================================"
+echo "  SETUP COMPLETE! The Print Bridge is running in background."
+echo "============================================================"
+EOF
+chmod +x install_printer.sh && ./install_printer.sh
+
+--------------------------------------------------------------------------------
+STEP 3: TEST A QUICK HARDWARE PRINT IN LINUX
+--------------------------------------------------------------------------------
+To test raw printing and auto-cutter directly from Linux, copy and paste this:
+
+python3 -c "
+import usb.core, usb.util
+dev = None
+for d in usb.core.find(find_all=True):
+    if d.idVendor != 0x1d6b:
+        dev = d
+        break
+if dev:
+    try:
+        if dev.is_kernel_driver_active(0): dev.detach_kernel_driver(0)
+    except: pass
+    dev.set_configuration()
+    intf = dev.get_active_configuration()[(0,0)]
+    ep = [e for e in intf if usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT][0]
+    ep.write(b'\x1b\x40\x1b\x61\x01Ganewa Shopping Mall Kurfi\n--------------------------------\nHARDWARE PRINT & CUT TEST OK!\n--------------------------------\nMun gode da kasuwancin ku!\n\n\n\n\x1d\x56\x00')
+    print('Printed successfully with auto-cut!')
+else:
+    print('Printer not detected in USB sharing!')
+"
+
+--------------------------------------------------------------------------------
+STEP 4: VERIFY IN GANEWA POS APP
+--------------------------------------------------------------------------------
+1. In Chrome on the Chromebook, go to your Ganewa POS website.
+2. In the Chrome address bar, click the tune/sliders icon (left of the URL) ->
+   "Site settings" -> set "Insecure content" to "Allow".
+3. In Ganewa POS, go to:
+   "Settings" -> "Hardware".
+4. Under "Alternative: Local / Network Print Bridge":
+   - Address: http://127.0.0.1:9123
+   - Click Refresh (🔄).
+   - Badge turns GREEN: "Connected to Xprinter XP-T80Q".
+5. Click "Test Direct Print (XP-80)".
+
+Result:
+Receipt will print with the exact jet-black hardware font, zero wasted paper,
+and automatic paper cutting with NO print dialog!
+================================================================================

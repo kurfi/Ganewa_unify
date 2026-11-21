@@ -2,7 +2,7 @@ import React from 'react';
 import { useDialog } from '../../contexts/DialogContext';
 import { format } from 'date-fns';
 import { RotateCcw, Trash2, PauseCircle } from 'lucide-react';
-import { db } from '../../db/db';
+import { salesRepo } from '../../repositories';
 import { Sale } from '../../types';
 
 interface HeldSalesPanelProps {
@@ -13,7 +13,7 @@ interface HeldSalesPanelProps {
 export function HeldSalesPanel({ heldSales, handleResumeSale }: HeldSalesPanelProps) {
     const { confirm } = useDialog();
     return (
-        <div className="flex-1 overflow-y-auto bg-white">
+        <div data-modal="true" className="flex-1 overflow-y-auto bg-white">
             <div className="divide-y divide-slate-100">
                 {heldSales && heldSales.length > 0 ? (
                     heldSales.map(sale => (
@@ -36,7 +36,7 @@ export function HeldSalesPanel({ heldSales, handleResumeSale }: HeldSalesPanelPr
                                 </button>
                                 <button
                                     onClick={async () => {
-                                        if (await confirm('Discard this held sale?', { type: 'warning', confirmText: 'Discard' })) await db.sales.delete(sale.id!);
+                                        if (await confirm('Discard this held sale?', { type: 'warning', confirmText: 'Discard' })) await salesRepo.delete(sale.id!);
                                     }}
                                     className="py-1.5 px-3 bg-red-50 text-red-600 text-xs font-bold rounded border border-red-200 hover:bg-red-100"
                                 >

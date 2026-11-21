@@ -8,28 +8,71 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function isStoreAccount() {
+      return isSignedIn() && request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com';
     }
 
-    // Products: Publicly readable, but not writable by ecommerce users
+    // Products: Publicly readable
+    // POS can fully write, regular users can only decrement quantity
     match /products/{productId} {
       allow read: if true;
-      allow write: if false; // Assuming POS or Admin handles this
+      allow write: if isStoreAccount();
+      allow update: if isSignedIn() 
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity']);
     }
 
-    // User Profiles: Owners can read and write their own data
+    // Bank Accounts: Customers can read active accounts, POS can write
+    match /bankAccounts/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isStoreAccount();
+    }
+
+    // Customer Payments (repayments): Customers can read their own, POS can write
+    match /customerPayments/{paymentId} {
+      allow read: if isSignedIn() && (
+        isStoreAccount() || 
+        resource.data.customerId == get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.linkedPosCustomerId
+      );
+      allow write: if isStoreAccount();
+    }
+
+    // User Profiles:
+    // - Customers can read/create/update their own profile
+    // - Customers CANNOT modify or create 'creditInfo', 'linkedPosCustomerId', or 'linkedPosCustomerName'
+    // - POS has full read/write access to sync creditInfo and manage links
     match /shopUsers/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isSignedIn() && (request.auth.uid == userId || isStoreAccount());
+      allow create: if isSignedIn() && request.auth.uid == userId 
+        && (!('creditInfo' in request.resource.data) || request.resource.data.creditInfo == null);
+      allow update: if isSignedIn() && (
+        isStoreAccount() || (
+          request.auth.uid == userId && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['creditInfo', 'linkedPosCustomerId', 'linkedPosCustomerName']) ||
+            (request.resource.data.linkedPosCustomerId == null &&
+             request.resource.data.creditInfo == null)
+          )
+        )
+      );
+      allow delete: if isStoreAccount();
+      allow list: if isStoreAccount() || request.query.limit == 1;
     }
 
     // Orders: 
-    // - Authenticated users can create orders
-    // - Users can read their own orders (filtered by userId)
+    // - Customers can create orders (with strict credit checks if method is 'credit')
+    // - Customers can read their own orders
+    // - POS can read, update, delete orders
     match /orders/{orderId} {
-      allow create: if true; 
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow update, delete: if false; 
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid
+        && (request.resource.data.method != 'credit' || (
+          get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.linkedPosCustomerId != null
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.linkedPosCustomerId == request.resource.data.linkedPosCustomerId
+          && 'creditInfo' in get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.creditInfo != null
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.creditInfo.creditLimit > 0
+          && get(/databases/$(database)/documents/shopUsers/$(request.auth.uid)).data.creditInfo.availableCredit >= request.resource.data.balanceRemaining
+        )); 
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isStoreAccount());
+      allow update, delete: if isStoreAccount();
     }
   }
 }

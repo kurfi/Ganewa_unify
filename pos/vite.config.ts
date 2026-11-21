@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -15,28 +16,14 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       VitePWA({
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
         registerType: 'autoUpdate',
         injectRegister: 'inline',
         includeAssets: ['favicon.ico', 'icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
-        workbox: {
-          skipWaiting: true,
-          clientsClaim: true,
+        injectManifest: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB limit
-          navigateFallbackDenylist: [/^\/api/, /googleapis\.com/],
-          runtimeCaching: [
-            {
-              urlPattern: /^https:\/\/firestore\.googleapis\.com\/.*/,
-              handler: 'NetworkOnly' as const,
-            },
-            {
-              urlPattern: /^https:\/\/.*\.googleapis\.com\/.*/,
-              handler: 'NetworkOnly' as const,
-            },
-            {
-              urlPattern: /^https:\/\/.*\.firebaseio\.com\/.*/,
-              handler: 'NetworkOnly' as const,
-            }
-          ],
         },
         manifest: {
           name: 'Ganewa Shopping Mall Kurfi',
@@ -74,6 +61,11 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
+    },
+    test: {
+      environment: 'happy-dom',
+      globals: true,
+      include: ['src/**/__tests__/**/*.test.ts'],
     }
   };
 });

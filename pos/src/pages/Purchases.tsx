@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
-import { db } from '../db/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState, useMemo, useEffect } from 'react';
+import { usePaginatedCollection } from '../hooks/usePaginatedCollection';
+import { Purchase } from '../types';
 import { Plus, Search, Package } from 'lucide-react';
-import { useAuth } from '../auth/AuthContext';
-import { UserRole } from '../types';
+import { subscribeDashboardRefresh } from '../utils/dashboardRefreshSignal';
 
 // Components
 import { PurchasesList } from '../components/purchases/PurchasesList';
@@ -13,18 +12,26 @@ export default function Purchases() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
 
-    const purchases = useLiveQuery(async () => {
-        let collection = db.purchases.orderBy('date').reverse();
-        if (searchQuery) {
-            const all = await collection.toArray();
-            const term = (searchQuery || '').toLowerCase();
-            return all.filter(p =>
-                (p.supplierName || '').toLowerCase().includes(term) ||
-                (p.invoiceNo || '').toLowerCase().includes(term)
-            );
-        }
-        return collection.toArray();
-    }, [searchQuery]) || [];
+    const { data: rawPurchases, loading, hasMore, loadMore, loadingMore, refresh } = usePaginatedCollection<Purchase>({
+        collectionName: 'purchases',
+        orderByField: 'date',
+        orderDirection: 'desc',
+        pageSize: 50,
+        searchTerm: searchQuery,
+        searchField: ['supplierNameLower', 'invoiceNoLower']
+    });
+
+    // Auto-refresh purchase orders whenever a new purchase is saved
+    useEffect(() => {
+        const unsubscribe = subscribeDashboardRefresh(() => {
+            refresh();
+        });
+        return () => unsubscribe();
+    }, [refresh]);
+
+    const purchases = useMemo(() => {
+        return rawPurchases;
+    }, [rawPurchases]);
 
     return (
         <div className="h-[calc(100vh-theme(spacing.16))] flex flex-col gap-4">
@@ -56,7 +63,27 @@ export default function Purchases() {
                     </div>
                 </div>
 
-                <PurchasesList purchases={purchases} />
+                <div className="flex-1 overflow-y-auto">
+                    <PurchasesList purchases={purchases} />
+
+                    {loading && (
+                        <div className="py-8 text-center text-slate-500">
+                            Loading purchases...
+                        </div>
+                    )}
+
+                    {hasMore && (
+                        <div className="flex justify-center p-6">
+                            <button
+                                onClick={loadMore}
+                                disabled={loadingMore}
+                                className="px-6 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                            >
+                                {loadingMore ? 'Loading...' : 'Load More'}
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <NewPurchaseModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />

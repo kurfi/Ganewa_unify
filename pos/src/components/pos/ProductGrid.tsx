@@ -1,7 +1,8 @@
 import React from 'react';
-import { Layers } from 'lucide-react';
+import { Layers, Image as ImageIcon } from 'lucide-react';
 import { Product } from '../../types';
 import { getCloudinaryThumbnail } from '../../services/cloudinary';
+import { ImageWithFallback } from '../ImageWithFallback';
 
 interface ProductGridProps {
     products: any[] | undefined;
@@ -28,10 +29,15 @@ export function ProductGrid({ products, isWholesaleMode, addToCart }: ProductGri
                         >
                             {product.photo && (
                                 <div className="mb-2 h-16 md:h-20 overflow-hidden rounded-lg bg-slate-100">
-                                    <img
+                                    <ImageWithFallback
                                         src={getCloudinaryThumbnail(product.photo, 300, 300)}
                                         alt={product.name}
                                         className="w-full h-full object-cover"
+                                        fallback={
+                                            <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400">
+                                                <ImageIcon className="w-5 h-5 opacity-60" />
+                                            </div>
+                                        }
                                     />
                                 </div>
                             )}

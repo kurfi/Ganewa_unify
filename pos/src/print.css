@@ -4,7 +4,9 @@
   }
 
   #printable-receipt,
-  #printable-receipt * {
+  #printable-receipt *,
+  #printable-barcode-sheet,
+  #printable-barcode-sheet * {
     visibility: visible;
   }
 
@@ -19,6 +21,16 @@
     display: flex;
     justify-content: center;
     align-items: flex-start;
+  }
+
+  #printable-barcode-sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    z-index: 9999;
+    display: block;
   }
 
   .no-print {

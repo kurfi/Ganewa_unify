@@ -1,11 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
-import { db, addReturn, addReturnedItem, updateCustomer } from '../db/db';
-import { Sale, SaleItem, PaymentMethod, ReturnReason, Return, Customer } from '../types';
+import { db } from '../firebase/config';
+import { logAudit, normalizeFirestoreDates } from '../firebase/firestoreHelpers';
+import { runTransaction, doc, collection, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { Sale, SaleItem, PaymentMethod, ReturnReason, Return, Customer, Product } from '../types';
 import { roundTo2 } from '../utils/math';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../auth/AuthContext';
 import { generateAndSavePdfFromHtml, saveElementAsImage } from '../services/pdfService';
 import { format } from 'date-fns';
+import { customersRepo } from '../repositories';
+import { v4 as uuidv4 } from 'uuid';
+import { emitDashboardRefresh } from '../utils/dashboardRefreshSignal';
+
+/**
+ * Detects whether a sale was purchased on credit (full or partial).
+ */
+export function isSaleBoughtOnCredit(sale?: Sale | null): boolean {
+    if (!sale) return false;
+    if (sale.paymentMethod === PaymentMethod.CREDIT) return true;
+    if (Array.isArray(sale.paymentMethods) && sale.paymentMethods.some(m => m.method === PaymentMethod.CREDIT && Number(m.amount) > 0)) return true;
+    if (sale.debtInfo && Number(sale.debtInfo.thisSaleDebt) > 0) return true;
+    if (sale.customerId && sale.amountPaid !== undefined && sale.finalAmount > sale.amountPaid) return true;
+    return false;
+}
 
 export function useReturns() {
     const [step, setStep] = useState(1);
@@ -17,6 +34,7 @@ export function useReturns() {
     const [refundMethod, setRefundMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
     const [customer, setCustomer] = useState<Customer | null>(null);
     const [returnId, setReturnId] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const receiptRef = useRef<HTMLDivElement>(null);
     const { currentUser } = useAuth();
@@ -24,7 +42,7 @@ export function useReturns() {
 
     useEffect(() => {
         if (originalSale?.customerId) {
-            db.customers.get(originalSale.customerId).then(setCustomer);
+            customersRepo.getById(originalSale.customerId).then(c => setCustomer(c || null));
         } else {
             setCustomer(null);
         }
@@ -40,36 +58,72 @@ export function useReturns() {
         setSearchResults([]);
         try {
             // 1. Search by ID
-            let sale = await db.sales.get(searchQuery);
-
-            // 2. Search by Invoice Number
-            if (!sale) {
-                sale = await db.sales.where('invoiceNo').equals(searchQuery).first();
+            const saleDocRef = doc(db, 'sales', searchQuery);
+            const saleSnap = await getDoc(saleDocRef);
+            if (saleSnap.exists()) {
+                const sale = normalizeFirestoreDates<Sale>({ ...saleSnap.data(), id: saleSnap.id });
+                if (!sale.deleted) {
+                    handleSelectSale(sale);
+                    return;
+                }
             }
 
-            if (sale) {
-                handleSelectSale(sale);
+            // 2. Search by Invoice Number
+            const invoiceQuery = query(
+                collection(db, 'sales'),
+                where('invoiceNo', '==', searchQuery),
+                where('deleted', '==', false)
+            );
+            const invoiceSnap = await getDocs(invoiceQuery);
+            if (!invoiceSnap.empty) {
+                const sales = invoiceSnap.docs.map(d => normalizeFirestoreDates<Sale>({ ...d.data(), id: d.id }));
+                if (sales.length === 1) {
+                    handleSelectSale(sales[0]);
+                } else {
+                    const sorted = [...sales].sort((a, b) => {
+                        const timeA = a.date ? new Date(a.date).getTime() : 0;
+                        const timeB = b.date ? new Date(b.date).getTime() : 0;
+                        return timeB - timeA;
+                    });
+                    setSearchResults(sorted);
+                    showToast(`Found ${sales.length} sales with invoice "${searchQuery}". Please select one.`, 'info');
+                }
                 return;
             }
 
-            // 3. Search by exact Customer Name
-            let salesByCustomer = await db.sales
-                .where('customerName').equals(searchQuery)
-                .sortBy('date');
+            // 3. Search by Customer Name
+            const customerQuery = query(
+                collection(db, 'sales'),
+                where('customerName', '==', searchQuery),
+                where('deleted', '==', false)
+            );
+            const customerSnap = await getDocs(customerQuery);
+            let salesByCustomer = customerSnap.docs.map(d => normalizeFirestoreDates<Sale>({ ...d.data(), id: d.id }));
 
-            // 4. Search by Case-Insensitive Customer Name Start (if no exact match)
+            // 4. If no exact match, try case-sensitive prefix range query (avoids full collection scan)
             if (salesByCustomer.length === 0) {
-                salesByCustomer = await db.sales
-                    .where('customerName').startsWithIgnoreCase(searchQuery)
-                    .sortBy('date');
+                const prefixEnd = searchQuery.slice(0, -1) + String.fromCharCode(searchQuery.charCodeAt(searchQuery.length - 1) + 1);
+                const prefixQuery = query(
+                    collection(db, 'sales'),
+                    where('customerName', '>=', searchQuery),
+                    where('customerName', '<', prefixEnd),
+                    where('deleted', '==', false)
+                );
+                const prefixSnap = await getDocs(prefixQuery);
+                salesByCustomer = prefixSnap.docs
+                    .map(d => normalizeFirestoreDates<Sale>({ ...d.data(), id: d.id }));
             }
 
             if (salesByCustomer.length > 0) {
                 if (salesByCustomer.length === 1) {
                     handleSelectSale(salesByCustomer[0]);
                 } else {
-                    // Sort descending for the UI selection
-                    setSearchResults([...salesByCustomer].reverse());
+                    const sorted = [...salesByCustomer].sort((a, b) => {
+                        const timeA = a.date ? new Date(a.date).getTime() : 0;
+                        const timeB = b.date ? new Date(b.date).getTime() : 0;
+                        return timeB - timeA;
+                    });
+                    setSearchResults(sorted);
                     showToast(`Found ${salesByCustomer.length} sales for "${searchQuery}". Please select one.`, 'info');
                 }
             } else {
@@ -95,6 +149,12 @@ export function useReturns() {
             }))
         );
         setTotalRefundAmount(0);
+        // Automatically default refund method to STORE_CREDIT if purchased on credit
+        if (isSaleBoughtOnCredit(sale)) {
+            setRefundMethod(PaymentMethod.STORE_CREDIT);
+        } else {
+            setRefundMethod(PaymentMethod.CASH);
+        }
         setStep(2);
         setSearchResults([]);
         showToast(`Sale #${sale.id || sale.invoiceNo} selected.`, 'success');
@@ -142,7 +202,7 @@ export function useReturns() {
         if (!originalSale) return;
         const updatedItems = originalSale.items.map(item => ({
             ...item,
-            returnedQuantity: item.quantity,
+            returnedQuantity: item.quantity - (item.returnedQuantity || 0),
             restockStatus: 'restocked' as 'restocked',
             reason: ReturnReason.OTHER,
         }));
@@ -154,9 +214,11 @@ export function useReturns() {
         setReturnableItems(prevItems => {
             const updatedItems = prevItems.map(item => {
                 if (item.productId === productId) {
+                    const originalSaleItem = originalSale?.items.find(i => i.productId === productId);
+                    const alreadyReturned = originalSaleItem?.returnedQuantity || 0;
                     return {
                         ...item,
-                        returnedQuantity: item.quantity,
+                        returnedQuantity: item.quantity - alreadyReturned,
                         restockStatus: 'restocked' as 'restocked',
                         reason: ReturnReason.OTHER,
                     };
@@ -169,6 +231,7 @@ export function useReturns() {
     };
 
     const handleProcessReturn = async () => {
+        if (isSubmitting) return; // Block double-submit
         if (!originalSale || returnableItems.every((item) => item.returnedQuantity === 0)) {
             showToast('No items selected for return.', 'info');
             return;
@@ -186,53 +249,128 @@ export function useReturns() {
             }
         }
 
+
+        setIsSubmitting(true);
         try {
-            await db.transaction('rw', [db.sales, db.products, db.returns, db.returnedItems, db.customers, db.auditLogs], async () => {
+            const newReturnId = uuidv4();
+            const nowIso = new Date().toISOString();
+            const now = new Date();
+            const isCreditSale = isSaleBoughtOnCredit(originalSale);
+            const effectiveRefundMethod = isCreditSale ? PaymentMethod.STORE_CREDIT : refundMethod;
+            let updatedCustomerRecord: Customer | null = null;
+
+            await runTransaction(db, async (tx) => {
+                // ── READ PHASE ──
+                // Read all product docs that are being returned
+                const productSnaps = await Promise.all(
+                    itemsToReturn.map(item => tx.get(doc(db, 'products', item.productId)))
+                );
+
+                // Read the original sale doc
+                const saleRef = doc(db, 'sales', originalSale.id!);
+                const saleSnap = await tx.get(saleRef);
+                if (!saleSnap.exists()) throw new Error('Original sale not found.');
+
+                // Read customer doc if present
+                let customerSnap = null;
+                const customerRef = originalSale.customerId ? doc(db, 'customers', originalSale.customerId) : null;
+                if (customerRef) {
+                    customerSnap = await tx.get(customerRef);
+                }
+
+                // ── GUARD: verify no item exceeds original sold quantity (prevents double-submit & race conditions) ──
+                const liveSaleData = normalizeFirestoreDates<Sale>(saleSnap.data());
+                for (const item of itemsToReturn) {
+                    const liveSaleItem = liveSaleData.items.find(si => si.productId === item.productId);
+                    if (!liveSaleItem) continue;
+                    const originalSoldQty  = liveSaleItem.quantity;
+                    const alreadyReturned  = liveSaleItem.returnedQuantity || 0;
+                    const remainingAllowed = originalSoldQty - alreadyReturned;
+                    if (item.returnedQuantity > remainingAllowed) {
+                        throw new Error(
+                            `Return rejected: "${item.productName}" — trying to return ${item.returnedQuantity} but only ${remainingAllowed} remaining. This sale may have already been returned.`
+                        );
+                    }
+                }
+
+                // ── WRITE PHASE ──
                 const staffId = currentUser?.id;
-                const returnEntry: Omit<Return, 'id'> = {
+
+                // 1. Create Return document
+                const returnRef = doc(db, 'returns', newReturnId);
+                tx.set(returnRef, {
+                    id: newReturnId,
                     saleId: originalSale.id!,
-                    customerId: originalSale.customerId,
+                    customerId: originalSale.customerId || null,
                     customerName: originalSale.customerName,
-                    staffId: staffId,
-                    returnDate: new Date(),
+                    staffId: staffId || null,
+                    returnDate: now,
                     totalRefundAmount: totalRefundAmount,
                     reason: returnReason as ReturnReason,
-                    paymentMethod: refundMethod,
-                    notes: '',
-                };
-                const newReturnId = await addReturn(returnEntry);
-                setReturnId(newReturnId);
+                    paymentMethod: effectiveRefundMethod,
+                    notes: isCreditSale ? 'Automated credit balance reduction for item returned from credit purchase.' : '',
+                    created_at: nowIso,
+                    updated_at: nowIso,
+                    deleted: false
+                });
 
-                for (const item of itemsToReturn) {
-                    const product = await db.products.get(item.productId);
-                    let actualCostPrice = item.costPrice || (product?.buyPrice ?? 0);
+                // 2. Create ReturnedItem documents and restock products
+                for (let i = 0; i < itemsToReturn.length; i++) {
+                    const item = itemsToReturn[i];
+                    const snap = productSnaps[i];
+                    const productData = snap.exists() ? normalizeFirestoreDates<Product>(snap.data()) : null;
+                    const actualCostPrice = item.costPrice || (productData?.buyPrice ?? 0);
                     const valueLost = item.restockStatus === 'damaged' ? item.returnedQuantity * actualCostPrice : 0;
 
-                    await addReturnedItem({
+                    const returnedItemId = uuidv4();
+                    const returnedItemRef = doc(db, 'returnedItems', returnedItemId);
+                    tx.set(returnedItemRef, {
+                        id: returnedItemId,
                         returnId: newReturnId,
                         productId: item.productId,
                         productName: item.productName,
                         quantity: item.returnedQuantity,
                         price: item.price,
                         refundAmount: roundTo2(item.returnedQuantity * item.price),
-                        restockStatus: item.restockStatus as 'restocked' | 'damaged',
+                        restockStatus: item.restockStatus,
                         valueLost: roundTo2(valueLost),
+                        returnDate: now,
+                        created_at: nowIso,
+                        updated_at: nowIso,
+                        deleted: false
                     });
 
-                    if (item.restockStatus === 'restocked' && product) {
-                        await db.products.update(product.id!, {
-                            quantity: product.quantity + item.returnedQuantity,
-                            updated_at: new Date().toISOString()
+                    // Restock product if not damaged
+                    if (item.restockStatus === 'restocked' && productData && snap.exists()) {
+                        const pRef = doc(db, 'products', item.productId);
+                        tx.update(pRef, {
+                            quantity: productData.quantity + item.returnedQuantity,
+                            stockValue: (productData.quantity + item.returnedQuantity) * (productData.buyPrice || 0),
+                            updated_at: nowIso
                         });
                     }
                 }
 
-                if (originalSale.paymentMethod === PaymentMethod.CREDIT && originalSale.customerId && customer) {
-                    const newDebt = roundTo2(customer.currentDebt - totalRefundAmount);
-                    await updateCustomer(customer.id!, { currentDebt: Math.max(0, newDebt) });
+                // 3. Update customer debt if refund method is Store Credit / Credit or original sale was on credit
+                const shouldReduceDebt = (effectiveRefundMethod === PaymentMethod.STORE_CREDIT || effectiveRefundMethod === PaymentMethod.CREDIT)
+                    && customerSnap && customerSnap.exists() && customerRef;
+
+                if (shouldReduceDebt) {
+                    const custData = normalizeFirestoreDates<Customer>(customerSnap.data());
+                    const currentDebt = custData.currentDebt || 0;
+                    const newDebt = roundTo2(Math.max(0, currentDebt - totalRefundAmount));
+                    tx.update(customerRef, {
+                        currentDebt: newDebt,
+                        updated_at: nowIso
+                    });
+                    updatedCustomerRecord = {
+                        ...custData,
+                        currentDebt: newDebt
+                    };
                 }
 
-                const updatedSaleItems: SaleItem[] = originalSale.items.map(saleItem => {
+                // 4. Update original sale's items with returnedQuantity
+                const updatedSaleItems: SaleItem[] = liveSaleData.items.map(saleItem => {
                     const returnedItemInThisTransaction = itemsToReturn.find(rtnItem => rtnItem.productId === saleItem.productId);
                     if (returnedItemInThisTransaction) {
                         return {
@@ -242,14 +380,41 @@ export function useReturns() {
                     }
                     return saleItem;
                 });
-                await db.sales.update(originalSale.id!, { items: updatedSaleItems });
+                tx.update(saleRef, { items: updatedSaleItems, updated_at: nowIso });
             });
 
-            showToast(`Return processed successfully! Refund: ₦${totalRefundAmount.toLocaleString()}`, 'success');
+            emitDashboardRefresh();
+
+            setReturnId(newReturnId);
+
+            if (updatedCustomerRecord) {
+                setCustomer(updatedCustomerRecord);
+                import('../utils/creditInfoSync')
+                    .then(({ syncCreditInfoToShopUser }) => syncCreditInfoToShopUser(updatedCustomerRecord!))
+                    .catch(err => console.warn('[CreditSync] Failed to sync credit info to shop user:', err));
+            }
+
+            const auditMsg = isCreditSale
+                ? `Processed return ${newReturnId} for credit sale ${originalSale.invoiceNo || originalSale.id} — Refund: ₦${totalRefundAmount.toLocaleString()} automatically applied to customer credit balance (Remaining debt: ₦${(updatedCustomerRecord?.currentDebt ?? 0).toLocaleString()})`
+                : `Processed return ${newReturnId} for sale ${originalSale.invoiceNo || originalSale.id} — Refund: ₦${totalRefundAmount.toLocaleString()}`;
+
+            logAudit(
+                'RETURN_PROCESSED',
+                auditMsg,
+                currentUser?.username || 'Unknown'
+            ).catch(console.error);
+
+            if (isCreditSale) {
+                showToast(`Return processed! Customer credit balance reduced by ₦${totalRefundAmount.toLocaleString()}`, 'success');
+            } else {
+                showToast(`Return processed successfully! Refund: ₦${totalRefundAmount.toLocaleString()}`, 'success');
+            }
             setStep(5);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error processing return:', error);
-            showToast('Failed to process return. See console for details.', 'error');
+            showToast(error?.message || 'Failed to process return. See console for details.', 'error');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -305,7 +470,7 @@ export function useReturns() {
         state: {
             step, searchQuery, originalSale, returnableItems, totalRefundAmount,
             returnReason, refundMethod, customer, returnId, receiptRef, currentUser,
-            searchResults
+            searchResults, isSubmitting
         },
         actions: {
             setStep, setSearchQuery, setReturnReason, setRefundMethod,

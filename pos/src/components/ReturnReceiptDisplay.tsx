@@ -195,7 +195,11 @@ const ReturnReceiptDisplay = React.forwardRef<
           </div>
           <div className="flex justify-between text-[9px] md:text-[10px]">
             <span>Refund Method:</span>
-            <span>{refundMethod}</span>
+            <span>
+              {refundMethod === PaymentMethod.STORE_CREDIT
+                ? "Store Credit (Debt Reduction)"
+                : refundMethod}
+            </span>
           </div>
           <div className="flex justify-between font-bold text-sm md:text-base mt-2">
             <span>TOTAL REFUND</span>
