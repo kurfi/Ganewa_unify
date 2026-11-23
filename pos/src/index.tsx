@@ -4,7 +4,7 @@ import './index.css';
 import './print.css';
 import App from './App';
 
-// Suppress specific verbose logs from external sources
+// Suppress verbose logs in production builds and external noise
 const originalLog = console.log;
 const originalDebug = console.debug;
 const originalWarn = console.warn;
@@ -29,9 +29,11 @@ const filter = (...args: any[]) => {
   );
 };
 
-console.log = (...args) => { if (!filter(...args)) originalLog(...args); };
-console.debug = (...args) => { if (!filter(...args)) originalDebug(...args); };
-console.warn = (...args) => { if (!filter(...args)) originalWarn(...args); };
+const isProd = import.meta.env.PROD;
+
+console.log = (...args) => { if (!isProd && !filter(...args)) originalLog(...args); };
+console.debug = (...args) => { if (!isProd && !filter(...args)) originalDebug(...args); };
+console.warn = (...args) => { if (!isProd && !filter(...args)) originalWarn(...args); };
 console.error = (...args) => { if (!filter(...args)) originalError(...args); };
 
 

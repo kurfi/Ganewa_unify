@@ -3,7 +3,6 @@ import { useAuth } from '../auth/AuthContext';
 import { UserRole } from '../types';
 
 import { SecurityProfile } from '../components/settings/SecurityProfile';
-import { FilePathConfig } from '../components/settings/FilePathConfig';
 import { HardwareConfig } from '../components/settings/HardwareConfig';
 import { UserManagement } from '../components/settings/UserManagement';
 import { SystemLogs } from '../components/settings/SystemLogs';
@@ -18,8 +17,6 @@ const Settings: React.FC = () => {
       <h1 className="text-xl md:text-2xl font-bold text-slate-800">Settings</h1>
 
       <SecurityProfile />
-
-      <FilePathConfig />
 
       <HardwareConfig />
 

@@ -2,7 +2,6 @@ import { Sale, PaymentMethod, Product, Customer, SaleItem, ReturnReason } from "
 import { format } from "date-fns";
 import { printViaDirectHardware } from "./webPrintService";
 import type { LabelMediaType } from "./webPrintService";
-import { isNativeAndroid, printViaNativeUsb } from "./nativePrinterService";
 
 // Helper functions for ESC/POS fixed-width monospace layouts
 const padLeft = (text: string, len: number): string => {
@@ -695,19 +694,7 @@ export const getPrintBridgeUrl = (): string => {
 };
 
 export const printDirectToThermalPrinter = async (buffer: Uint8Array): Promise<boolean> => {
-  // 1. If running natively on Android (Chromebook / Tablet), use native USB bulk printhead access
-  if (isNativeAndroid()) {
-    try {
-      const nativeOk = await printViaNativeUsb(buffer);
-      if (nativeOk) {
-        return true;
-      }
-    } catch (nativeErr) {
-      console.warn("Native Android USB print failed:", nativeErr);
-    }
-  }
-
-  // 2. Try Direct Web Hardware (WebUSB, Web Bluetooth, Web Serial) without dialog or external server.
+  // 1. Try Direct Web Hardware (WebUSB, Web Bluetooth, Web Serial) without dialog or external server.
   //    Only attempt the user's configured type — the bridge is the primary fallback if it fails.
   const { getSavedHardwareType } = await import("./webPrintService");
   const savedType = getSavedHardwareType();

@@ -28,25 +28,12 @@ import {
     setSavedLabelMediaType,
     LabelMediaType
 } from '../../services/webPrintService';
-import {
-    isNativeAndroid,
-    getConnectedUsbPrinters,
-    requestUsbPrinterPermission,
-    cutNativePaper,
-    openNativeCashDrawer,
-    UsbDeviceInfo
-} from '../../services/nativePrinterService';
 
 export function HardwareConfig() {
     const [printerTarget, setPrinterTarget] = useState('');
     const [isChecking, setIsChecking] = useState(false);
     const [isTesting, setIsTesting] = useState(false);
     const [statusInfo, setStatusInfo] = useState<{ ok: boolean; message: string; printer?: string } | null>(null);
-
-    // Native Android / Chromebook USB State
-    const [isNative, setIsNative] = useState(false);
-    const [nativeUsbDevices, setNativeUsbDevices] = useState<UsbDeviceInfo[]>([]);
-    const [isScanningNative, setIsScanningNative] = useState(false);
 
     // Direct Web Hardware State
     const [hardwareInfo, setHardwareInfo] = useState<DirectHardwareInfo>({
@@ -63,60 +50,11 @@ export function HardwareConfig() {
     const { showToast } = useToast();
 
     useEffect(() => {
-        const native = isNativeAndroid();
-        setIsNative(native);
-        if (native) {
-            refreshNativeDevices();
-        }
         const pt = localStorage.getItem('printerTarget') || '';
         setPrinterTarget(pt);
         checkBridge(pt || getPrintBridgeUrl());
         refreshHardwareStatus();
     }, []);
-
-    const refreshNativeDevices = async () => {
-        setIsScanningNative(true);
-        try {
-            const devices = await getConnectedUsbPrinters();
-            setNativeUsbDevices(devices);
-        } catch (e) {
-            console.error('Failed to get native USB printers:', e);
-        } finally {
-            setIsScanningNative(false);
-        }
-    };
-
-    const handleGrantNativeUsb = async (deviceId?: number) => {
-        try {
-            const granted = await requestUsbPrinterPermission(deviceId);
-            if (granted) {
-                showToast('USB Printer permission granted!', 'success');
-                await refreshNativeDevices();
-            } else {
-                showToast('USB Printer permission was not granted', 'error');
-            }
-        } catch (e: any) {
-            showToast(`Permission error: ${e.message}`, 'error');
-        }
-    };
-
-    const handleCutPaper = async () => {
-        const ok = await cutNativePaper();
-        if (ok) {
-            showToast('Paper cut command sent successfully', 'success');
-        } else {
-            showToast('Failed to trigger paper cut', 'error');
-        }
-    };
-
-    const handleOpenDrawer = async () => {
-        const ok = await openNativeCashDrawer();
-        if (ok) {
-            showToast('Cash drawer kick pulse sent', 'success');
-        } else {
-            showToast('Failed to kick cash drawer', 'error');
-        }
-    };
 
     const refreshHardwareStatus = async () => {
         try {
@@ -280,108 +218,8 @@ export function HardwareConfig() {
             </div>
 
             <div className="space-y-5">
-                {/* SECTION 1: Native Android / Chromebook USB Hardware or Web Hardware */}
-                {isNative ? (
-                    <div className="border border-emerald-300 bg-emerald-50 rounded-xl p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <span className="p-1.5 bg-emerald-200 text-emerald-800 rounded-lg">
-                                    <Usb className="w-5 h-5" />
-                                </span>
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="text-sm font-bold text-slate-900">Native Android / Chromebook USB Direct Mode</h3>
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-600 text-white">
-                                            ACTIVE RUNTIME
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-slate-600">
-                                        Zero-dialog, zero-margin direct ESC/POS hardware printing via Android UsbManager.
-                                    </p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={refreshNativeDevices}
-                                disabled={isScanningNative}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium border border-slate-300 shadow-sm transition-colors"
-                            >
-                                <RefreshCw className={`w-3.5 h-3.5 ${isScanningNative ? 'animate-spin' : ''}`} />
-                                Scan USB
-                            </button>
-                        </div>
-
-                        {/* List of Connected USB Devices */}
-                        {nativeUsbDevices.length === 0 ? (
-                            <div className="bg-white p-3 rounded-lg border border-dashed border-emerald-300 text-center py-4">
-                                <Usb className="w-6 h-6 text-slate-400 mx-auto mb-1" />
-                                <p className="text-xs font-semibold text-slate-700">No USB Devices Detected</p>
-                                <p className="text-[11px] text-slate-500 mt-0.5">
-                                    Plug your Xprinter XP-T80Q USB cable into the Chromebook / Tablet, then tap "Scan USB".
-                                </p>
-                            </div>
-                        ) : (
-                            <div className="space-y-2">
-                                {nativeUsbDevices.map((device) => (
-                                    <div
-                                        key={device.deviceId}
-                                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-emerald-200"
-                                    >
-                                        <div>
-                                            <div className="flex items-center gap-2">
-                                                <p className="text-xs font-bold text-slate-800">
-                                                    {device.productName || device.deviceName || `USB Device #${device.deviceId}`}
-                                                </p>
-                                                {device.isPrinter && (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-800">
-                                                        Thermal Printer
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <p className="text-[11px] text-slate-500 mt-0.5">
-                                                VID: 0x{device.vendorId.toString(16).padStart(4, '0')} &bull; PID: 0x{device.productId.toString(16).padStart(4, '0')}
-                                                {device.manufacturerName ? ` &bull; ${device.manufacturerName}` : ''}
-                                            </p>
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                            {device.hasPermission ? (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                                    <Check className="w-3.5 h-3.5" />
-                                                    Permission Granted
-                                                </span>
-                                            ) : (
-                                                <button
-                                                    onClick={() => handleGrantNativeUsb(device.deviceId)}
-                                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-                                                >
-                                                    Grant USB Permission
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Native Hardware Utilities: Test Cut & Drawer Kick */}
-                        <div className="flex flex-wrap gap-2 pt-1 border-t border-emerald-200/60">
-                            <button
-                                onClick={handleCutPaper}
-                                className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium border border-slate-300 shadow-sm"
-                            >
-                                ✂️ Test Paper Cut
-                            </button>
-                            <button
-                                onClick={handleOpenDrawer}
-                                className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium border border-slate-300 shadow-sm"
-                            >
-                                💵 Kick Cash Drawer
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    /* SECTION 1: Direct Web Hardware Printing (No Dialog, No Server) */
-                    <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-4 space-y-3">
+                {/* SECTION 1: Direct Web Hardware Printing (No Dialog, No Server) */}
+                <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-4 space-y-3">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <span className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg">
@@ -451,14 +289,10 @@ export function HardwareConfig() {
                                         </button>
                                     )}
                                 </div>
-                                <p className="text-[11px] text-slate-500 flex items-start gap-1">
-                                    <Info className="w-3.5 h-3.5 mt-0.5 text-slate-400 shrink-0" />
-                                    <span>Note: If running on a Chromebook via browser, ChromeOS blocks WebUSB printers. Use the native Capacitor Android APK build for full direct USB access.</span>
-                                </p>
+
                             </div>
                         )}
                     </div>
-                )}
 
                 {/* SECTION 2: Label Media Type */}
                 <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-4 space-y-3">

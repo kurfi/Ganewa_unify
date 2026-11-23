@@ -20,7 +20,6 @@ import { ModalProvider } from './contexts/ModalContext';
 import { CartProvider } from './contexts/CartContext';
 import { SyncProvider } from './contexts/SyncContext';
 import { OnlineOrdersProvider } from './contexts/OnlineOrdersContext';
-import { createAppDirectories } from './services/directoryService';
 import { UserRole } from './types';
 
 // Top-level function for one-time application initialization
@@ -36,8 +35,6 @@ const initializeAppServices = async () => {
       console.log(`[PWA] Cleared ${staleCaches.length} stale cache(s)`);
     }
   }
-
-  await createAppDirectories();
 };
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles: UserRole[] }) {
