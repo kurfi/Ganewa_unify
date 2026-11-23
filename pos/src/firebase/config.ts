@@ -14,6 +14,23 @@ import {
 // available inside Android WebView, so we must use the single-tab manager there.
 const isCapacitor = !!(window as any).Capacitor;
 
+// Verify required Firebase and auth environment variables
+const requiredEnvVars = [
+    'VITE_FIREBASE_API_KEY',
+    'VITE_FIREBASE_AUTH_DOMAIN',
+    'VITE_FIREBASE_PROJECT_ID',
+    'VITE_FIREBASE_STORAGE_BUCKET',
+    'VITE_FIREBASE_MESSAGING_SENDER_ID',
+    'VITE_FIREBASE_APP_ID',
+    'VITE_FIREBASE_STORE_PASSWORD'
+] as const;
+
+for (const envVar of requiredEnvVars) {
+    if (!import.meta.env[envVar]) {
+        throw new Error(`[Firebase Config] Missing required environment variable: ${envVar}`);
+    }
+}
+
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -28,7 +45,7 @@ export const auth = getAuth(app);
 
 // Silent Auth for POS
 const STORE_EMAIL = 'ganewashoppingmallkurfi@gmail.com';
-const STORE_PASSWORD = import.meta.env.VITE_FIREBASE_STORE_PASSWORD || 'GanewaStore123!';
+const STORE_PASSWORD = import.meta.env.VITE_FIREBASE_STORE_PASSWORD;
 
 // ---------------------------------------------------------------------------
 // Auth Status Observable
