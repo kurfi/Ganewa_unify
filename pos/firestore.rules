@@ -52,9 +52,21 @@ service cloud.firestore {
     match /products/{productId} {
       allow read: if true;
       allow create, delete: if isAdmin();
-      allow update: if isAdmin() || (
-        isStaff() 
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'stockValue', 'updated_at'])
+      allow update: if (
+        isAdmin() || (
+          isStaff()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'stockValue', 'updated_at'])
+        ) || (
+          isStaff()
+          && ('lastSaleId' in request.resource.data)
+          && existsAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
+        ) || (
+          isStaff()
+          && ('auditLogId' in request.resource.data)
+          && existsAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId))
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
+        )
       );
 
       // Sensitive financial / supplier data subcollection:

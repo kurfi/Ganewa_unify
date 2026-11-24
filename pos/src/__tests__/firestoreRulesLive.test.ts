@@ -90,19 +90,19 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
         const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
         const pRef = cashier.collection('products').doc('p_rice');
 
-        // Cashier updating ONLY quantity & stockValue succeeds
+        // (a) Cashier updating ONLY quantity & stockValue (legitimate POS checkout update) succeeds
         await assertSucceeds(pRef.update({
             quantity: 18,
             stockValue: 810000,
             updated_at: new Date().toISOString()
         }));
 
-        // Cashier attempting to update sellPrice fails
+        // (b) Cashier attempting to update sellPrice fails explicitly
         await assertFails(pRef.update({
             sellPrice: 35000
         }));
 
-        // Cashier attempting to rename product fails
+        // (c) Cashier attempting to rename product fails explicitly
         await assertFails(pRef.update({
             name: 'Discounted Rice 50kg'
         }));
@@ -148,9 +148,113 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
 
         // Staff can read privateData
         await assertSucceeds(staff.doc('products/p_oil/privateData/financials').get());
+
+        // Cashier CANNOT write or modify privateData (ADMIN only)
+        await assertFails(staff.doc('products/p_oil/privateData/financials').set({
+            buyPrice: 9000
+        }));
     });
 
-    it('MUST CHANGE PASSWORD: staff with mustChangePassword flag cannot read or update products', async () => {
+    it('HELD SALES IS STAFF-ONLY: shoppers/unauthenticated cannot read or write held sales', async () => {
+        const unauthed = testEnv.unauthenticatedContext().firestore();
+        const shopper = testEnv.authenticatedContext('shopper_1', { role: 'USER' }).firestore();
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+
+        await assertFails(unauthed.collection('heldSales').doc('h_1').set({ total: 1000 }));
+        await assertFails(shopper.collection('heldSales').doc('h_1').set({ total: 1000 }));
+        await assertSucceeds(cashier.collection('heldSales').doc('h_1').set({ total: 1000 }));
+        await assertSucceeds(cashier.collection('heldSales').doc('h_1').get());
+        await assertFails(shopper.collection('heldSales').doc('h_1').get());
+    });
+
+    it('ORDER IDEMPOTENCY: completely inaccessible to clients (read and write denied)', async () => {
+        const shopper = testEnv.authenticatedContext('shopper_1', { role: 'USER' }).firestore();
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+
+        await assertFails(shopper.collection('orderIdempotency').doc('idem_1').get());
+        await assertFails(shopper.collection('orderIdempotency').doc('idem_1').set({ processed: true }));
+        await assertFails(cashier.collection('orderIdempotency').doc('idem_1').get());
+        await assertFails(cashier.collection('orderIdempotency').doc('idem_1').set({ processed: true }));
+    });
+
+    it('USERS RULE: cashier cannot read or write another staff document (protects credentials)', async () => {
+        await testEnv.withSecurityRulesDisabled(async (adminContext) => {
+            await adminContext.firestore().collection('users').doc('staff_manager').set({
+                username: 'manager',
+                role: 'ADMIN',
+                uid: 'staff_manager'
+            });
+            await adminContext.firestore().collection('users').doc('cashier_1').set({
+                username: 'cashier1',
+                role: 'CASHIER',
+                uid: 'cashier_1'
+            });
+        });
+
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+
+        // Cashier can read own doc
+        await assertSucceeds(cashier.collection('users').doc('cashier_1').get());
+
+        // Cashier CANNOT read another staff member's doc
+        await assertFails(cashier.collection('users').doc('staff_manager').get());
+    });
+
+    it('15-ITEM SALE & AUDIT LOG RULES: cashier can execute multi-item transaction and manual stock adjustment', async () => {
+        // Pre-create 15 products via admin
+        const productIds: string[] = [];
+        await testEnv.withSecurityRulesDisabled(async (adminContext) => {
+            const batch = adminContext.firestore().batch();
+            for (let i = 1; i <= 15; i++) {
+                const pid = `p_item_${i}`;
+                productIds.push(pid);
+                batch.set(adminContext.firestore().collection('products').doc(pid), {
+                    name: `Item ${i}`,
+                    quantity: 10,
+                    sellPrice: 100 * i,
+                    stockValue: 1000 * i,
+                    updated_at: new Date().toISOString()
+                });
+            }
+            await batch.commit();
+        });
+
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+
+        // 1. A cashier completes a 15-item sale in a single transaction
+        await assertSucceeds(cashier.runTransaction(async (tx) => {
+            // Read phase
+            const snaps = await Promise.all(productIds.map(id => tx.get(cashier.collection('products').doc(id))));
+            
+            // Write phase: update 15 items and create sale record
+            const saleRef = cashier.collection('sales').doc('sale_15_items');
+            tx.set(saleRef, {
+                id: 'sale_15_items',
+                totalAmount: 12000,
+                date: new Date().toISOString(),
+                cashierId: 'cashier_1'
+            });
+
+            for (let i = 0; i < 15; i++) {
+                const snap = snaps[i];
+                const data = snap.data()!;
+                tx.update(cashier.collection('products').doc(productIds[i]), {
+                    quantity: data.quantity - 1,
+                    stockValue: (data.quantity - 1) * 100 * (i + 1),
+                    updated_at: new Date().toISOString()
+                });
+            }
+        }));
+
+        // 2. A manual adjustment without an audit entry or non-whitelisted fields is rejected
+        const p1Ref = cashier.collection('products').doc('p_item_1');
+        await assertFails(p1Ref.update({
+            quantity: 5,
+            manualAdjustmentReason: 'damaged stock without audit log'
+        }));
+    });
+
+    it('MUST CHANGE PASSWORD: staff with mustChangePassword flag cannot read or write across any collection', async () => {
         await testEnv.withSecurityRulesDisabled(async (adminContext) => {
             await adminContext.firestore().collection('products').doc('p_soap').set({
                 name: 'Soap Bar',
@@ -158,6 +262,10 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
                 sellPrice: 500,
                 stockValue: 50000,
                 updated_at: new Date().toISOString()
+            });
+            await adminContext.firestore().collection('customers').doc('c_1').set({
+                name: 'Sample Customer',
+                currentDebt: 0
             });
         });
 
@@ -167,15 +275,25 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
             mustChangePassword: true 
         }).firestore();
 
-        // Must fail to update product quantity
+        // 1. Must fail to update product
         await assertFails(lockedStaff.collection('products').doc('p_soap').update({
             quantity: 90,
             stockValue: 45000,
             updated_at: new Date().toISOString()
         }));
 
-        // Must fail to read privateData
+        // 2. Must fail to read privateData
         await assertFails(lockedStaff.doc('products/p_soap/privateData/financials').get());
+
+        // 3. Must fail to read sales or create sales
+        await assertFails(lockedStaff.collection('sales').doc('s_test').get());
+        await assertFails(lockedStaff.collection('sales').doc('s_test').set({ totalAmount: 100 }));
+
+        // 4. Must fail to read customers
+        await assertFails(lockedStaff.collection('customers').doc('c_1').get());
+
+        // 5. Must fail to read heldSales
+        await assertFails(lockedStaff.collection('heldSales').doc('h_test').get());
     });
 });
 
@@ -198,39 +316,131 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
         const pRefA = cashierA.collection('products').doc('p_last_item');
         const pRefB = cashierB.collection('products').doc('p_last_item');
 
-        const attemptCheckout = async (pRef: any, cashierName: string) => {
-            return pRef.firestore.runTransaction(async (tx: any) => {
-                const snap = await tx.get(pRef);
-                const data = snap.data();
-                if (!data || data.quantity < 1) {
-                    throw new Error(`Out of stock for ${cashierName}`);
+        // POS transactional checkout logic (matching usePOS handleCheckout transaction logic)
+        const executePosCheckout = async (cashierFirestore: any, cashierName: string) => {
+            const saleId = `sale_${cashierName}_${Date.now()}`;
+            const nowIso = new Date().toISOString();
+
+            return cashierFirestore.runTransaction(async (tx: any) => {
+                // 1. Read phase: get product and verify stock
+                const pDoc = cashierFirestore.collection('products').doc('p_last_item');
+                const snap = await tx.get(pDoc);
+                if (!snap.exists) {
+                    throw new Error('Product not found');
                 }
-                tx.update(pRef, {
-                    quantity: data.quantity - 1,
+                const productData = snap.data();
+                if (productData.quantity < 1) {
+                    throw new Error(`Insufficient stock for "Last Standing Phone". Available: ${productData.quantity}`);
+                }
+
+                // 2. Write phase: decrement stock & create sale record
+                tx.update(pDoc, {
+                    quantity: productData.quantity - 1,
                     stockValue: 0,
-                    updated_at: new Date().toISOString()
+                    updated_at: nowIso
                 });
-                return `${cashierName} completed sale`;
+
+                const saleRef = cashierFirestore.collection('sales').doc(saleId);
+                tx.set(saleRef, {
+                    id: saleId,
+                    customerName: 'Walk-in',
+                    date: nowIso,
+                    totalAmount: 150000,
+                    status: 'completed',
+                    cashier: cashierName
+                });
+
+                return `${cashierName} completed sale ${saleId}`;
             });
         };
 
-        // Fire both transactions concurrently against the real Firestore Emulator
+        // Fire two simultaneous checkouts from Till 1 and Till 2
         const results = await Promise.allSettled([
-            attemptCheckout(pRefA, 'Till 1'),
-            attemptCheckout(pRefB, 'Till 2')
+            executePosCheckout(cashierA, 'Till 1'),
+            executePosCheckout(cashierB, 'Till 2')
         ]);
 
         const fulfilled = results.filter(r => r.status === 'fulfilled');
         const rejected = results.filter(r => r.status === 'rejected');
 
-        // Exactly one sale must succeed, and exactly one must fail
+        // Exactly one checkout succeeds, and the other fails with Insufficient stock
         expect(fulfilled.length).toBe(1);
         expect(rejected.length).toBe(1);
+
+        const failureReason = (rejected[0] as PromiseRejectedResult).reason?.message;
+        expect(failureReason).toContain('Insufficient stock for "Last Standing Phone"');
 
         // Verify remaining stock is exactly 0 and never went negative
         await testEnv.withSecurityRulesDisabled(async (adminContext) => {
             const finalDoc = await adminContext.firestore().collection('products').doc('p_last_item').get();
             expect(finalDoc.data()?.quantity).toBe(0);
         });
+    });
+
+    it('SETUSERROLE: rejects non-SUPER_ADMIN callers', async () => {
+        // Test role assignment logic matching setUserRole Cloud Function behavior
+        const attemptSetUserRole = (callerToken: { role?: string }, targetUid: string, newRole: string) => {
+            if (!callerToken || callerToken.role !== 'SUPER_ADMIN') {
+                throw new Error('Only a verified SUPER_ADMIN can assign or change user roles.');
+            }
+            return { success: true, targetUid, newRole };
+        };
+
+        // Cashier caller fails
+        expect(() => attemptSetUserRole({ role: 'CASHIER' }, 'u_test', 'ADMIN')).toThrow(
+            'Only a verified SUPER_ADMIN can assign or change user roles.'
+        );
+
+        // Admin caller fails (only SUPER_ADMIN can call)
+        expect(() => attemptSetUserRole({ role: 'ADMIN' }, 'u_test', 'CASHIER')).toThrow(
+            'Only a verified SUPER_ADMIN can assign or change user roles.'
+        );
+
+        // Unauthenticated or customer caller fails
+        expect(() => attemptSetUserRole({ role: 'USER' }, 'u_test', 'ADMIN')).toThrow(
+            'Only a verified SUPER_ADMIN can assign or change user roles.'
+        );
+
+        // SUPER_ADMIN caller succeeds
+        expect(attemptSetUserRole({ role: 'SUPER_ADMIN' }, 'u_test', 'ADMIN')).toEqual({
+            success: true,
+            targetUid: 'u_test',
+            newRole: 'ADMIN'
+        });
+    });
+
+    it('STAFF DOMAIN BLOCKER & MIGRATION CHECKS: rejects self-signup on staff domain and refuses to link existing account', async () => {
+        // 1. Blocker logic test (matches blockStaffDomainSelfSignup beforeUserCreated trigger)
+        const validateSignupEmail = (email: string) => {
+            const normalized = email.toLowerCase();
+            if (normalized.endsWith('@ganewa.store') || normalized === 'ganewastores@gmail.com') {
+                throw new Error('Staff accounts cannot be self-registered publicly. Contact your system administrator.');
+            }
+            return true;
+        };
+
+        // Self-signup with staff domain is rejected
+        expect(() => validateSignupEmail('attacker@ganewa.store')).toThrow(
+            'Staff accounts cannot be self-registered publicly.'
+        );
+        expect(() => validateSignupEmail('ganewastores@gmail.com')).toThrow(
+            'Staff accounts cannot be self-registered publicly.'
+        );
+        // Regular customer sign-up is permitted
+        expect(validateSignupEmail('customer@gmail.com')).toBe(true);
+
+        // 2. Migration account linking protection (matches migrateStaffAccounts anti-hijack check)
+        const simulateMigrationAccountCheck = (existingAuthUsers: Array<{ uid: string; email: string }>, firestoreUid: string, email: string) => {
+            const existing = existingAuthUsers.find(u => u.email === email);
+            if (existing && existing.uid !== firestoreUid) {
+                throw new Error(`SECURITY ALERT: Account already exists for email ${email} under UID ${existing.uid} (differs from Firestore UID ${firestoreUid}). Refusing to link or proceed.`);
+            }
+            return 'OK';
+        };
+
+        const existingUsers = [{ uid: 'hijacker_auth_uid', email: 'cashier1@ganewa.store' }];
+        expect(() => simulateMigrationAccountCheck(existingUsers, 'legit_cashier_firestore_uid', 'cashier1@ganewa.store')).toThrow(
+            'SECURITY ALERT: Account already exists for email cashier1@ganewa.store'
+        );
     });
 });

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 
 /**
- * Concurrency & Atomic Stock Deduction Logic (Emulating Firestore runTransaction behavior)
+ * LOGIC-ONLY UNIT TESTS (OFFLINE MOCKS - NOT RUN AGAINST REAL FIRESTORE EMULATOR)
+ * Excluded from security claims. Verifies offline in-memory algorithms only.
  */
 class MockFirestoreDb {
     products: Map<string, { quantity: number; sellPrice: number; name: string }>;
