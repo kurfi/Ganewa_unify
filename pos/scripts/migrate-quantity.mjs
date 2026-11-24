@@ -33,7 +33,10 @@ dotenv.config({ path: path.join(__dirname, '../.env.local') });
 const API_KEY       = process.env.VITE_FIREBASE_API_KEY;
 const PROJECT_ID    = process.env.VITE_FIREBASE_PROJECT_ID;
 const STORE_EMAIL   = 'ganewashoppingmallkurfi@gmail.com';
-const STORE_PASSWORD = process.env.VITE_FIREBASE_STORE_PASSWORD || 'GanewaStore123!';
+const STORE_PASSWORD = process.env.VITE_FIREBASE_STORE_PASSWORD;
+if (!STORE_PASSWORD) {
+    throw new Error('VITE_FIREBASE_STORE_PASSWORD is required in environment variables');
+}
 const DRY_RUN       = process.env.DRY_RUN !== 'false'; // default: true
 
 if (!API_KEY || !PROJECT_ID) {

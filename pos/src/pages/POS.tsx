@@ -55,7 +55,8 @@ export default function POS() {
     // Firestore Real-time subscriptions (scoped to prevent reading all historical sales)
     const { data: rawCustomers } = useCollection<Customer>('customers');
     const { data: rawProducts } = useCollection<Product>('products');
-    const { data: heldSalesDocs } = useCollection<Sale>('sales', useMemo(() => [where('status', '==', SaleStatus.HELD)], []));
+    // Query the isolated 'heldSales' collection instead of mixing into completed sales
+    const { data: heldSalesDocs } = useCollection<Sale>('heldSales', useMemo(() => [where('status', '==', SaleStatus.HELD)], []));
     const { data: recentSalesDocs } = useCollection<Sale>('sales', useMemo(() => [where('status', '==', SaleStatus.COMPLETED), orderBy('date', 'desc'), limit(100)], []));
 
     const customers = useMemo(() => {

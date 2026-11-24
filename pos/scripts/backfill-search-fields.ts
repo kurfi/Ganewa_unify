@@ -30,7 +30,10 @@ async function backfillSearchFields() {
     console.log('🔑 Authenticating as store account...');
     const auth = getAuth(app);
     const email = 'ganewashoppingmallkurfi@gmail.com';
-    const password = process.env.VITE_FIREBASE_STORE_PASSWORD || 'GanewaStore123!';
+    const password = process.env.VITE_FIREBASE_STORE_PASSWORD;
+    if (!password) {
+        throw new Error('VITE_FIREBASE_STORE_PASSWORD is required in environment variables');
+    }
     
     try {
         await signInWithEmailAndPassword(auth, email, password);

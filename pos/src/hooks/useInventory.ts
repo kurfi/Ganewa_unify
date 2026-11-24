@@ -109,9 +109,20 @@ export function useInventory(currentUser: User | null) {
             showToast('Product updated successfully', 'success');
 
             // 2. Persist in background
+            const previousQty = editingProduct.quantity;
+            const newQty = data.quantity ?? previousQty;
+            const isQtyChange = previousQty !== newQty;
+
             productsRepo.update(productId, { ...data, stockValue: computedStockValue })
                 .then(() => {
                     emitDashboardRefresh();
+                    if (isQtyChange) {
+                        logAudit(
+                            'STOCK_QUANTITY_CHANGE',
+                            `Cashier/Staff ${currentUser?.username || 'Unknown'} changed stock for "${data.name}" from ${previousQty} to ${newQty}. Reason: Manual stock adjustment`,
+                            currentUser?.username || 'Unknown'
+                        ).catch(console.error);
+                    }
                     logAudit('UPDATE_PRODUCT', `Updated product: ${data.name}`, currentUser?.username || 'Unknown').catch(console.error);
                 })
                 .catch((error) => {

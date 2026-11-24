@@ -27,7 +27,10 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const STORE_EMAIL = 'ganewashoppingmallkurfi@gmail.com';
-const STORE_PASSWORD = envConfig.VITE_FIREBASE_STORE_PASSWORD || 'GanewaStore123!';
+const STORE_PASSWORD = envConfig.VITE_FIREBASE_STORE_PASSWORD;
+if (!STORE_PASSWORD) {
+    throw new Error('VITE_FIREBASE_STORE_PASSWORD is required in environment configuration');
+}
 
 const productsPath = path.join(__dirname, '../firebase-export/products.json');
 const salesPath = path.join(__dirname, '../firebase-export/sales.json');

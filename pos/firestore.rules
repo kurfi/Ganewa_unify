@@ -4,31 +4,22 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // -------------------------------------------------------------
-    // Helper functions
+    // Helper functions (Purely custom claims based - zero email fallbacks)
     // -------------------------------------------------------------
     function isSignedIn() {
       return request.auth != null;
     }
     
     function isStaff() {
-      return isSignedIn() && (
-        request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com' ||
-        request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'CASHIER']
-      );
+      return isSignedIn() && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com' ||
-        request.auth.token.role in ['SUPER_ADMIN', 'ADMIN']
-      );
+      return isSignedIn() && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN'];
     }
 
     function isSuperAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com' ||
-        request.auth.token.role == 'SUPER_ADMIN'
-      );
+      return isSignedIn() && request.auth.token.role == 'SUPER_ADMIN';
     }
 
     // -------------------------------------------------------------
@@ -60,6 +51,7 @@ service cloud.firestore {
     }
     match /customers/{docId} { allow read, write: if isStaff(); }
     match /sales/{docId} { allow read, write: if isStaff(); }
+    match /heldSales/{docId} { allow read, write: if isStaff(); }
     match /expenses/{docId} { allow read, write: if isStaff(); }
     match /purchases/{docId} { allow read, write: if isStaff(); }
     match /suppliers/{docId} { allow read, write: if isStaff(); }

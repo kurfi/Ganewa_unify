@@ -49,7 +49,10 @@ const firebaseConfig = {
 };
 
 const STORE_EMAIL    = 'ganewashoppingmallkurfi@gmail.com';
-const STORE_PASSWORD = envConfig.VITE_FIREBASE_STORE_PASSWORD || 'GanewaStore123!';
+const STORE_PASSWORD = envConfig.VITE_FIREBASE_STORE_PASSWORD;
+if (!STORE_PASSWORD) {
+    throw new Error('VITE_FIREBASE_STORE_PASSWORD is required in environment configuration');
+}
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

@@ -1097,13 +1097,11 @@ export const setUserRole = onCall(
             throw new HttpsError('unauthenticated', 'Must be signed in to manage user roles.');
         }
 
-        const callerEmail = request.auth.token.email;
         const callerRole = request.auth.token.role;
 
-        // Strictly restricted to SUPER_ADMIN callers only (or bootstrap store email)
-        const isSuperAdmin = callerEmail === STORE_EMAIL || callerRole === 'SUPER_ADMIN';
-        if (!isSuperAdmin) {
-            throw new HttpsError('permission-denied', 'Only a SUPER_ADMIN can assign or change roles.');
+        // Strictly restricted to authenticated SUPER_ADMIN callers only (no email exceptions)
+        if (callerRole !== 'SUPER_ADMIN') {
+            throw new HttpsError('permission-denied', 'Only a verified SUPER_ADMIN can assign or change user roles.');
         }
 
         const { targetUid, role } = request.data as { targetUid: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'CASHIER' | 'USER' };
@@ -1145,13 +1143,20 @@ interface CreateOrderCustomerInput {
     email?: string;
 }
 
-const STANDARD_DELIVERY_FEE = 1500; // Flat delivery fee calculated strictly server-side
+const DEFAULT_DELIVERY_FEE = 1500;
 
 export const createOrder = onCall(
-    { region: 'us-central1', cors: true },
+    { region: 'us-central1', cors: true, enforceAppCheck: false }, // Enforced via context check with debug fallback
     async (request) => {
         if (!request.auth) {
             throw new HttpsError('unauthenticated', 'Must be signed in to place an order.');
+        }
+
+        // App Check verification (soft enforcement allowing emulator/dev tokens)
+        if (process.env.FUNCTIONS_EMULATOR !== 'true' && process.env.NODE_ENV === 'production') {
+            if (!request.app) {
+                throw new HttpsError('failed-precondition', 'The request was rejected due to missing App Check token.');
+            }
         }
 
         const userId = request.auth.uid;
@@ -1174,8 +1179,13 @@ export const createOrder = onCall(
             proofUrl?: string | null;
             selectedBankAccountId?: string | null;
             wantsPartial?: boolean;
-            idempotencyKey?: string;
+            idempotencyKey: string;
         };
+
+        // Idempotency key is strictly required
+        if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+            throw new HttpsError('invalid-argument', 'idempotencyKey is required for safe checkout.');
+        }
 
         if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
             throw new HttpsError('invalid-argument', 'Order must contain between 1 and 50 item types.');
@@ -1202,31 +1212,39 @@ export const createOrder = onCall(
             mergedQuantities.set(item.id, updated);
         }
 
-        // 2. Check idempotency key if provided
-        if (idempotencyKey) {
-            const existingOrderQuery = await db.collection('orders')
-                .where('idempotencyKey', '==', idempotencyKey)
-                .where('userId', '==', userId)
-                .limit(1)
-                .get();
-
-            if (!existingOrderQuery.empty) {
-                const existing = existingOrderQuery.docs[0].data();
-                console.log(`[createOrder] Duplicate request caught by idempotencyKey: ${idempotencyKey}`);
-                return {
-                    success: true,
-                    orderId: existing.orderId,
-                    id: existingOrderQuery.docs[0].id,
-                    total: existing.total,
-                    idempotentReplay: true
-                };
-            }
-        }
+        // Document ID for idempotency record: keyed by uid + idempotencyKey to prevent race conditions
+        const idempotencyDocId = `${userId}_${idempotencyKey.trim()}`;
+        const idempotencyRef = db.collection('orderIdempotency').doc(idempotencyDocId);
 
         const orderDocRef = db.collection('orders').doc();
         const now = Timestamp.now();
 
         const result = await db.runTransaction(async (transaction) => {
+            // Check idempotency record inside transaction first
+            const idempSnap = await transaction.get(idempotencyRef);
+            if (idempSnap.exists) {
+                const idempData = idempSnap.data() || {};
+                console.log(`[createOrder] Duplicate request caught by idempotencyKey document: ${idempotencyKey}`);
+                return {
+                    orderId: idempData.orderId,
+                    id: idempData.orderDocId,
+                    total: idempData.total,
+                    idempotentReplay: true
+                };
+            }
+
+            // Fetch dynamic delivery fee from settings document
+            let deliveryFee = 0;
+            if (method === 'delivery') {
+                const settingsSnap = await transaction.get(db.doc('settings/storeConfig'));
+                deliveryFee = settingsSnap.exists && Number.isFinite(settingsSnap.data()?.deliveryFee)
+                    ? Number(settingsSnap.data()?.deliveryFee)
+                    : DEFAULT_DELIVERY_FEE;
+            } else {
+                // Pickup and other non-delivery methods are strictly free
+                deliveryFee = 0;
+            }
+
             // Check user profile for linked customer
             const userRef = db.collection('shopUsers').doc(userId);
             const userSnap = await transaction.get(userRef);
@@ -1252,7 +1270,7 @@ export const createOrder = onCall(
 
                 const prodData = productSnap.data() || {};
                 
-                // Reject inactive products
+                // Reject inactive or deleted products
                 if (prodData.active === false || prodData.deleted === true) {
                     throw new HttpsError('failed-precondition', `Product ${prodData.name || productId} is no longer available.`);
                 }
@@ -1291,8 +1309,6 @@ export const createOrder = onCall(
                 });
             }
 
-            // Server-side delivery fee calculation
-            const deliveryFee = method === 'delivery' ? STANDARD_DELIVERY_FEE : 0;
             const computedTotal = computedSubtotal + deliveryFee;
 
             // Deduct stock atomically
@@ -1307,7 +1323,7 @@ export const createOrder = onCall(
 
             const orderData: any = {
                 orderId: newOrderId,
-                idempotencyKey: idempotencyKey || null,
+                idempotencyKey: idempotencyKey.trim(),
                 userId,
                 linkedPosCustomerId: resolvedLinkedPosCustomerId,
                 items: orderItems,
@@ -1340,8 +1356,22 @@ export const createOrder = onCall(
 
             transaction.set(orderDocRef, orderData);
 
-            return { orderId: newOrderId, id: orderDocRef.id, total: computedTotal };
+            // Record idempotency lock in transaction
+            transaction.set(idempotencyRef, {
+                userId,
+                orderId: newOrderId,
+                orderDocId: orderDocRef.id,
+                total: computedTotal,
+                createdAt: now
+            });
+
+            return { orderId: newOrderId, id: orderDocRef.id, total: computedTotal, idempotentReplay: false };
         });
+
+        console.log(`[createOrder] Order created server-side: ${result.orderId} (Total: ${result.total}) for user ${userId}`);
+        return { success: true, ...result };
+    }
+);
 
         console.log(`[createOrder] Order created server-side: ${result.orderId} (Total: ${result.total}) for user ${userId}`);
         return { success: true, ...result };

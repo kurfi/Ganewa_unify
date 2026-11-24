@@ -89,7 +89,8 @@ export function usePOS({
 
             const cleanedSaleData = sanitizeFirestoreData(saleData);
 
-            await salesRepo.create(cleanedSaleData as any);
+            // Store in dedicated 'heldSales' collection to prevent polluting sales reports/stats
+            await setDoc(doc(db, 'heldSales', cleanedSaleData.invoiceNo || `HLD-${Date.now()}`), cleanedSaleData);
             clearCart();
             setDiscount(0);
             setSelectedCustomer(null);
@@ -121,7 +122,7 @@ export function usePOS({
             }));
 
             if (sale.id) {
-                await deleteDoc(doc(db, 'sales', sale.id));
+                await deleteDoc(doc(db, 'heldSales', sale.id));
             }
 
             setCart(itemsWithCurrentStock);

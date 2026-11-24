@@ -325,9 +325,13 @@ export default function Cart() {
                 }, 0);
             }
 
+            // Generate unique idempotency key for this submission attempt
+            const idempotencyKey = `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
             // Call the secure server-side createOrder Cloud Function
             const createOrderFn = httpsCallable<any, { success: boolean; orderId: string; id: string; total: number }>(functions, 'createOrder');
             const result = await createOrderFn({
+                idempotencyKey,
                 items: cartItems.map(item => ({
                     id: item.id!,
                     quantity: item.cartQuantity

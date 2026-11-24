@@ -28,6 +28,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@tailwindcss/postcss": "^4.1.17",
     "@types/node": "^22.19.1",
     "@vitejs/plugin-react": "^5.0.0",
