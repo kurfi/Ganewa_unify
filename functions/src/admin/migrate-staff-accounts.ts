@@ -64,6 +64,19 @@ export async function migrateStaffAccounts(options: MigrationOptions = {}) {
         console.log(`[StaffMigration] Processing: ${username} -> ${email} (Role: ${role})`);
 
         try {
+            // Safety Check: Verify if an account with this email already exists under a DIFFERENT UID.
+            // If so, fail loudly to prevent account hijacking/linking.
+            try {
+                const existingByEmail = await auth.getUserByEmail(email);
+                if (existingByEmail.uid !== uid) {
+                    throw new Error(`SECURITY ALERT: Account already exists for email ${email} under UID ${existingByEmail.uid} (differs from Firestore UID ${uid}). Refusing to link or proceed.`);
+                }
+            } catch (emailErr: any) {
+                if (emailErr.code !== 'auth/user-not-found') {
+                    throw emailErr;
+                }
+            }
+
             let firebaseUser;
             try {
                 firebaseUser = await auth.getUser(uid);
@@ -84,8 +97,14 @@ export async function migrateStaffAccounts(options: MigrationOptions = {}) {
                         });
 
                         results.created++;
+                        // Print temporary password strictly to stdout once; NEVER write to file or Firestore
+                        console.log(`[StaffMigration] CREATED AUTH USER:`);
+                        console.log(`   Username: ${username}`);
+                        console.log(`   Email:    ${email}`);
+                        console.log(`   TempPass: ${tempPass}`);
+                        console.log(`   ------------------------------------------`);
+
                         results.tempPasswordsIssued.push({ username, email, tempPass });
-                        console.log(`[StaffMigration] Created Auth user ${email}`);
 
                         if (options.sendResetEmails) {
                             try {
@@ -103,15 +122,16 @@ export async function migrateStaffAccounts(options: MigrationOptions = {}) {
 
             // Assign role custom claims
             if (!isDryRun) {
-                await auth.setCustomUserClaims(uid, { role });
+                await auth.setCustomUserClaims(uid, { role, mustChangePassword: true });
                 results.updated++;
 
-                // Record email and username mapping in document (preserving legacy password)
+                // Record email and username mapping in document (preserving legacy password for now)
                 await db.collection('users').doc(uid).set({
                     email,
                     username,
                     role,
                     migratedToAuth: true,
+                    mustChangePassword: true,
                     migratedAt: FieldValue.serverTimestamp()
                 }, { merge: true });
             }

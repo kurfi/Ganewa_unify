@@ -2,6 +2,17 @@
   "projects": {
     "default": "ganewa-provision-pos"
   },
-  "targets": {},
+  "targets": {
+    "ganewa-provision-pos": {
+      "hosting": {
+        "pos": [
+          "ganewa-provision-pos"
+        ],
+        "shop": [
+          "ganewamall-shop"
+        ]
+      }
+    }
+  },
   "etags": {}
 }

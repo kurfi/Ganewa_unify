@@ -1,6 +1,7 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onMessagePublished } from 'firebase-functions/v2/pubsub';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { beforeUserCreated, HttpsError as AuthBlockingError } from 'firebase-functions/v2/identity';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp, getApps } from 'firebase-admin/app';
@@ -1123,10 +1124,27 @@ export const setUserRole = onCall(
             updatedAt: FieldValue.serverTimestamp()
         }, { merge: true });
 
-        console.log(`[setUserRole] User ${targetUid} role set to ${role} by ${callerEmail}`);
+        console.log(`[setUserRole] User ${targetUid} role set to ${role}`);
         return { success: true, targetUid, role };
     }
 );
+
+// ─────────────────────────────────────────────────────────────
+//  TASK 9.5: Blocking Function - Prevent Public Staff Domain Sign-Up
+// ─────────────────────────────────────────────────────────────
+export const blockStaffDomainSelfSignup = beforeUserCreated(async (event) => {
+    const user = event.data;
+    const email = user?.email?.toLowerCase() || '';
+
+    // Block any public self-registration attempting to register with the staff domain or store email
+    if (email.endsWith('@ganewa.store') || email === STORE_EMAIL) {
+        console.warn(`[blockStaffDomainSelfSignup] Rejected public self-signup attempt for staff email: ${email}`);
+        throw new AuthBlockingError(
+            'permission-denied',
+            'Staff accounts cannot be self-registered publicly. Contact your system administrator.'
+        );
+    }
+});
 
 // ─────────────────────────────────────────────────────────────
 //  TASK 10: Server-side Order Creation (Safe Checkout)
