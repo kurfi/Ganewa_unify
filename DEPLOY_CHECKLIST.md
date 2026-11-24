@@ -124,6 +124,7 @@ This section details the zero-downtime transition from legacy department/categor
 
 ### Step 7c: Execute Product Category Migration
 - Ensure Firestore backup is taken first.
+- **Permission & Security Notice**: The restriction that only `SUPER_ADMIN` can run the category migration is enforced strictly in application code (`executeUnifiedCategoriesMigration`), not in Firestore security rules. This is because Firestore rules permit both `ADMIN` and `SUPER_ADMIN` to perform product writes, and rules cannot distinguish between the two for product catalog fields.
 - Execute `migrateUnifiedCategories(confirmed = true)`:
   - Migrates products in batches of $\le 500$ writes.
   - Sets `categoryId` (the source of truth) and normalizes display `category` name copy.
@@ -132,9 +133,11 @@ This section details the zero-downtime transition from legacy department/categor
 ### Step 8: Deploy PWAs (POS & E-commerce Storefront)
 Build and deploy both frontends:
 
-> **SEO Branch Integration Note**:
+> **SEO Branch Integration & Firebase Hosting Redirect Limits**:
 > Because a Single Page Application (SPA) running in the browser cannot emit real HTTP 301 status headers, historical SEO redirects must be baked into Firebase Hosting at build/deploy time.
-> The build script queries active categories with non-empty `oldSlugs` and appends `redirects` entries into `firebase.json`:
+> - **Firebase Hosting Redirect Limits**: Firebase Hosting enforces a maximum of **2,000 redirects** (or a max configuration file size limit of 100 KB for `firebase.json`). With 14-50 categories, typical old slug counts are far below this limit (< 100 entries).
+> - **Direct Redirect Guarantee (No Redirect Chains)**: In our data model, when a category is renamed multiple times, all previous historical slugs are stored in a flat array (`oldSlugs: string[]`). Build-time redirects map every historical slug directly to the CURRENT canonical slug (`/category/:oldSlug` $\to$ `/category/:canonicalSlug`), preventing multiple HTTP redirect hops.
+> - The build script queries active categories with non-empty `oldSlugs` and appends `redirects` entries into `firebase.json`:
 > ```json
 > {
 >   "hosting": {
@@ -148,7 +151,7 @@ Build and deploy both frontends:
 >   }
 > }
 > ```
-> At runtime within the SPA, `resolveCategoryBySlug(slug, categories)` performs client-side fallback navigation (`navigate('/category/' + category.slug, { replace: true })`) when an old slug URL is loaded.
+> - At runtime within the SPA, `resolveCategoryBySlug(slug, categories)` performs client-side fallback navigation (`navigate('/category/' + category.slug, { replace: true })`) if a route is visited directly without hitting the hosting redirect.
 
 ```bash
 # POS

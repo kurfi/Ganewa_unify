@@ -63,12 +63,11 @@ export default defineConfig(({ mode }) => {
       }
     },
     test: {
-      environment: 'node',
+      environment: 'happy-dom',
       globals: true,
-      fileParallelism: false,
-      include: ['src/**/__tests__/**/*.test.ts', 'src/**/tests/**/*.test.ts', 'src/tests/**/*.test.ts'],
-      hookTimeout: 30000,
       testTimeout: 30000,
+      fileParallelism: false,
+      include: ['src/**/__tests__/**/*.test.ts', 'src/tests/**/*.test.ts'],
     }
   };
 });

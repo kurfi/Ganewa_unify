@@ -107,5 +107,5 @@ describe('Slug resolution and uniqueness against real Firestore emulator', () =>
         expect(seoQuery.empty).toBe(false);
         expect(seoQuery.docs[0].id).toBe('cat_snacks');
         expect(seoQuery.docs[0].data().slug).toBe('snacks-biscuits');
-    });
+    }, 20000);
 });
