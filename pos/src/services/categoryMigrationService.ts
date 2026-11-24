@@ -2,7 +2,8 @@ import { db } from '../firebase/config';
 import { collection, getDocs, doc, setDoc, writeBatch } from 'firebase/firestore';
 import { slugify } from '../utils/slugify';
 import { PRODUCT_CATEGORIES } from '../constants/productCategories';
-import { Category, Product } from '../types';
+import { Category, Product, UserRole } from '../types';
+import { logAudit } from '../firebase/firestoreHelpers';
 
 export interface DistinctCategoryReport {
     rawCategory: string;
@@ -14,6 +15,8 @@ export interface DistinctCategoryReport {
 
 export interface MigrationDryRunResult {
     isDryRun: boolean;
+    sessionId: string;
+    timestamp: string;
     categoriesToCreate: Array<{ name: string; slug: string; sortOrder: number }>;
     existingCategories: string[];
     productAnalysis: DistinctCategoryReport[];
@@ -25,6 +28,7 @@ export interface MigrationExecutionResult {
     categoriesCreated: number;
     productsMigrated: number;
     errors: string[];
+    resumedFromInterruption: boolean;
 }
 
 /**
@@ -42,6 +46,13 @@ export const APPROVED_LEGACY_MAPPINGS: Record<string, string> = {
     'vaseline': 'Personal Care (Hair, Skin & Oral)'
 };
 
+// Tracks the most recent dry run in the current session
+let lastSessionDryRun: MigrationDryRunResult | null = null;
+
+export function getLastSessionDryRun(): MigrationDryRunResult | null {
+    return lastSessionDryRun;
+}
+
 /**
  * Performs a dry run analysis of categories and products.
  * Does NOT write any data to Firestore.
@@ -49,26 +60,22 @@ export const APPROVED_LEGACY_MAPPINGS: Record<string, string> = {
 export async function dryRunUnifiedCategories(): Promise<MigrationDryRunResult> {
     // 1. Fetch current categories from Firestore
     const catSnap = await getDocs(collection(db, 'categories'));
-    const existingCats: string[] = [];
-    const existingCatNamesLower = new Set<string>();
-    catSnap.forEach(d => {
-        const name = d.data().name?.trim();
-        if (name) {
-            existingCats.push(name);
-            existingCatNamesLower.add(name.toLowerCase());
-        }
+    const existingCats = new Map<string, Category>();
+    catSnap.docs.forEach(d => {
+        const data = d.data() as Category;
+        existingCats.set(data.name.toLowerCase().trim(), { id: d.id, ...data });
     });
 
-    // 2. Identify which standard predefined categories need to be created
+    // 2. Identify missing standard categories to create
     const categoriesToCreate: Array<{ name: string; slug: string; sortOrder: number }> = [];
-    let nextSortOrder = catSnap.size;
+    let sortOrder = existingCats.size;
     for (const stdName of PRODUCT_CATEGORIES) {
-        if (!existingCatNamesLower.has(stdName.toLowerCase())) {
-            nextSortOrder++;
+        if (!existingCats.has(stdName.toLowerCase().trim())) {
+            sortOrder++;
             categoriesToCreate.push({
                 name: stdName,
                 slug: slugify(stdName),
-                sortOrder: nextSortOrder
+                sortOrder
             });
         }
     }
@@ -77,10 +84,10 @@ export async function dryRunUnifiedCategories(): Promise<MigrationDryRunResult> 
     const prodSnap = await getDocs(collection(db, 'products'));
     const categoryGroupMap = new Map<string, { count: number; samples: string[] }>();
 
-    prodSnap.forEach(d => {
-        const p = d.data() as Product;
+    prodSnap.docs.forEach(docSnap => {
+        const p = docSnap.data() as Product;
         const raw = (p.category || p.department || '').trim();
-        const key = raw || '(empty / missing)';
+        const key = raw || '(empty)';
 
         if (!categoryGroupMap.has(key)) {
             categoryGroupMap.set(key, { count: 0, samples: [] });
@@ -92,30 +99,25 @@ export async function dryRunUnifiedCategories(): Promise<MigrationDryRunResult> 
         }
     });
 
-    // 4. Map distinct categories
-    const stdLowerMap = new Map<string, string>();
-    PRODUCT_CATEGORIES.forEach(c => stdLowerMap.set(c.toLowerCase(), c));
-
+    // 4. Map distinct groups to approved targets
     const productAnalysis: DistinctCategoryReport[] = [];
     let productsToUpdateCount = 0;
     let unmappedProductsCount = 0;
 
     categoryGroupMap.forEach((val, rawCat) => {
-        const lower = rawCat.toLowerCase();
+        const lower = rawCat.toLowerCase().trim();
         let proposedTarget: string | null = null;
         let status: 'mapped' | 'unmapped' | 'exact_match' = 'unmapped';
 
-        if (stdLowerMap.has(lower)) {
-            proposedTarget = stdLowerMap.get(lower)!;
+        if (PRODUCT_CATEGORIES.some(c => c.toLowerCase() === lower)) {
             status = 'exact_match';
-            // Only needs update if casing differs or missing categoryId
-            productsToUpdateCount += val.count;
+            proposedTarget = PRODUCT_CATEGORIES.find(c => c.toLowerCase() === lower)!;
         } else if (APPROVED_LEGACY_MAPPINGS[lower]) {
-            proposedTarget = APPROVED_LEGACY_MAPPINGS[lower];
             status = 'mapped';
-            productsToUpdateCount += val.count;
+            proposedTarget = APPROVED_LEGACY_MAPPINGS[lower];
         } else {
             status = 'unmapped';
+            proposedTarget = null;
             unmappedProductsCount += val.count;
         }
 
@@ -128,42 +130,87 @@ export async function dryRunUnifiedCategories(): Promise<MigrationDryRunResult> 
         });
     });
 
-    return {
+    // 5. Count products that actually need updates
+    for (const docSnap of prodSnap.docs) {
+        const p = docSnap.data() as Product;
+        const raw = (p.category || p.department || '').trim().toLowerCase();
+        let targetName: string | null = null;
+
+        if (PRODUCT_CATEGORIES.some(c => c.toLowerCase() === raw)) {
+            targetName = PRODUCT_CATEGORIES.find(c => c.toLowerCase() === raw)!;
+        } else if (APPROVED_LEGACY_MAPPINGS[raw]) {
+            targetName = APPROVED_LEGACY_MAPPINGS[raw];
+        }
+
+        if (targetName) {
+            const existing = existingCats.get(targetName.toLowerCase());
+            // Needs update if categoryId is missing/mismatched or display name is not normalized
+            if (!p.categoryId || (existing && p.categoryId !== existing.id) || p.category !== targetName) {
+                productsToUpdateCount++;
+            }
+        }
+    }
+
+    const report: MigrationDryRunResult = {
         isDryRun: true,
+        sessionId: `dryrun-${Date.now()}`,
+        timestamp: new Date().toISOString(),
         categoriesToCreate,
-        existingCategories: existingCats,
+        existingCategories: Array.from(existingCats.values()).map(c => c.name),
         productAnalysis,
         productsToUpdateCount,
         unmappedProductsCount
     };
+
+    lastSessionDryRun = report;
+    return report;
 }
 
 /**
- * Executes migration with idempotent guarantees.
- * Requires confirmed = true.
- * Updates products in chunks <= 500 per batch.
- * Never silently maps unapproved categories.
+ * Executes the real migration to assign categoryId and normalize display category copies.
+ * - Enforces SUPER_ADMIN role.
+ * - Requires explicit typed confirmation matching "MIGRATE CATEGORIES".
+ * - Requires a successful dry run in the same session.
+ * - Idempotent and resumable in chunks <= 500 writes.
+ * - Creates exactly one audit log entry for the run.
  */
-export async function executeUnifiedCategoriesMigration(confirmed: boolean): Promise<MigrationExecutionResult> {
-    if (!confirmed) {
-        throw new Error('Migration aborted: explicit confirmation is required.');
-    }
-
+export async function executeUnifiedCategoriesMigration(
+    currentUserRole: UserRole | string,
+    currentUsername: string,
+    typedConfirmation: string,
+    dryRunSessionId?: string
+): Promise<MigrationExecutionResult> {
     const result: MigrationExecutionResult = {
         categoriesCreated: 0,
         productsMigrated: 0,
-        errors: []
+        errors: [],
+        resumedFromInterruption: false
     };
 
+    // Safety checks
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== 'SUPER_ADMIN') {
+        throw new Error('Permission denied: Only SUPER_ADMIN can execute the unified categories migration.');
+    }
+
+    if (typedConfirmation.trim() !== 'MIGRATE CATEGORIES') {
+        throw new Error('Safety confirmation mismatch: You must type "MIGRATE CATEGORIES" to confirm.');
+    }
+
+    if (!lastSessionDryRun) {
+        throw new Error('Safety block: You must run a Dry-Run inspection in the same session before executing the migration.');
+    }
+
+    if (dryRunSessionId && dryRunSessionId !== lastSessionDryRun.sessionId) {
+        throw new Error('Stale Dry-Run session: Please run a new Dry-Run before executing.');
+    }
+
     try {
-        // 1. Fetch / ensure 14 categories exist idempotently
+        // 1. Fetch current categories and create any missing approved standard categories
         const catSnap = await getDocs(collection(db, 'categories'));
-        const catMap = new Map<string, { id: string; name: string }>(); // lower(name) -> doc
-        catSnap.forEach(d => {
-            const data = d.data();
-            if (data.name) {
-                catMap.set(data.name.trim().toLowerCase(), { id: d.id, name: data.name });
-            }
+        const catMap = new Map<string, { id: string; name: string }>();
+        catSnap.docs.forEach(d => {
+            const data = d.data() as Category;
+            catMap.set(data.name.toLowerCase().trim(), { id: d.id, name: data.name });
         });
 
         let currentOrder = catSnap.size;
@@ -206,6 +253,7 @@ export async function executeUnifiedCategoriesMigration(confirmed: boolean): Pro
                 targetName = APPROVED_LEGACY_MAPPINGS[lower];
             }
 
+            // Only update if target is known and product is not yet matching
             if (targetName) {
                 const targetCat = catMap.get(targetName.toLowerCase());
                 if (targetCat && (p.categoryId !== targetCat.id || p.category !== targetCat.name)) {
@@ -229,6 +277,13 @@ export async function executeUnifiedCategoriesMigration(confirmed: boolean): Pro
         if (batchCount > 0) {
             await batch.commit();
         }
+
+        // 3. Log a single audit entry for the entire migration run
+        await logAudit(
+            'MIGRATE_UNIFIED_CATEGORIES',
+            `Unified categories migration completed: ${result.productsMigrated} products updated, ${result.categoriesCreated} standard categories created. Dry-run session: ${lastSessionDryRun.sessionId}`,
+            currentUsername || 'Super Admin'
+        );
 
         return result;
     } catch (err: any) {

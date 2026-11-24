@@ -1,3 +1,5 @@
+import { Category } from '../types';
+
 export function slugify(text: string): string {
     return text
         .toString()
@@ -8,4 +10,85 @@ export function slugify(text: string): string {
         .replace(/\-\-+/g, '-')         // Replace multiple - with single -
         .replace(/^-+/, '')             // Trim - from start of text
         .replace(/-+$/, '');            // Trim - from end of text
+}
+
+/**
+ * Checks if a candidate slug conflicts with any existing category's current slug
+ * OR any category's historical oldSlugs.
+ *
+ * @param candidateSlug The slug to test
+ * @param existingCategories All loaded categories
+ * @param currentCategoryId The ID of the category being edited (optional, ignored in conflict checks)
+ * @returns { isAvailable: boolean; conflictReason?: string }
+ */
+export function isSlugUnique(
+    candidateSlug: string,
+    existingCategories: Category[],
+    currentCategoryId?: string
+): { isAvailable: boolean; conflictReason?: string } {
+    const normalized = candidateSlug.trim().toLowerCase();
+    if (!normalized) {
+        return { isAvailable: false, conflictReason: 'Slug cannot be empty' };
+    }
+
+    for (const cat of existingCategories) {
+        // Skip self when updating an existing category
+        if (currentCategoryId && cat.id === currentCategoryId) {
+            continue;
+        }
+
+        // 1. Conflict with a category's primary slug
+        if ((cat.slug || '').toLowerCase() === normalized) {
+            return {
+                isAvailable: false,
+                conflictReason: `Slug "${normalized}" is already used as current slug by category "${cat.name}"`
+            };
+        }
+
+        // 2. Conflict with a category's historical oldSlugs
+        if (Array.isArray(cat.oldSlugs)) {
+            const hasOldSlug = cat.oldSlugs.some(s => (s || '').toLowerCase() === normalized);
+            if (hasOldSlug) {
+                return {
+                    isAvailable: false,
+                    conflictReason: `Slug "${normalized}" is reserved as a historical redirect for category "${cat.name}"`
+                };
+            }
+        }
+    }
+
+    return { isAvailable: true };
+}
+
+/**
+ * Resolves a category by slug or historical oldSlugs redirect.
+ *
+ * @param slug The slug requested (e.g. from URL path)
+ * @param categories List of active categories (or all categories)
+ * @returns { category: Category | null; isRedirect: boolean; targetSlug: string | null }
+ */
+export function resolveCategoryBySlug(
+    slug: string,
+    categories: Category[]
+): { category: Category | null; isRedirect: boolean; targetSlug: string | null } {
+    const normalized = (slug || '').trim().toLowerCase();
+    if (!normalized) {
+        return { category: null, isRedirect: false, targetSlug: null };
+    }
+
+    // 1. Direct match on current slug
+    const directMatch = categories.find(c => (c.slug || '').toLowerCase() === normalized);
+    if (directMatch) {
+        return { category: directMatch, isRedirect: false, targetSlug: directMatch.slug };
+    }
+
+    // 2. Match on oldSlugs
+    const redirectMatch = categories.find(c =>
+        Array.isArray(c.oldSlugs) && c.oldSlugs.some(s => (s || '').toLowerCase() === normalized)
+    );
+    if (redirectMatch) {
+        return { category: redirectMatch, isRedirect: true, targetSlug: redirectMatch.slug };
+    }
+
+    return { category: null, isRedirect: false, targetSlug: null };
 }

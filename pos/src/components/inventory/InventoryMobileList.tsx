@@ -1,6 +1,7 @@
 import React from 'react';
 import { Edit, Trash2, Tag } from 'lucide-react';
 import { Product } from '../../types';
+import { useActiveCategories } from '../../hooks/useActiveCategories';
 
 interface InventoryMobileListProps {
     products: Product[] | undefined;
@@ -10,6 +11,12 @@ interface InventoryMobileListProps {
 }
 
 export function InventoryMobileList({ products, handleOpenModal, handleDelete, handleOpenLabelModal }: InventoryMobileListProps) {
+    const { categories } = useActiveCategories();
+    const categoryNameMap = React.useMemo(() => {
+        const m = new Map<string, string>();
+        categories.forEach(c => { if (c.id) m.set(c.id, c.name); });
+        return m;
+    }, [categories]);
     return (
         <div className="md:hidden grid grid-cols-1 gap-4 p-4 bg-slate-50/50">
             {products?.map(product => (
@@ -39,7 +46,9 @@ export function InventoryMobileList({ products, handleOpenModal, handleDelete, h
                     </div>
 
                     <div className="flex justify-between items-center text-xs flex-wrap gap-2">
-                        <span className="text-slate-500 font-medium">{product.category}</span>
+                        <span className="text-slate-500 font-medium">
+                            {(product.categoryId && categoryNameMap.get(product.categoryId)) || product.category || '—'}
+                        </span>
                         <div className="flex gap-2 items-center flex-wrap">
                             {/* Labels button → opens modal for quantity selection */}
                             {handleOpenLabelModal && (
