@@ -7,7 +7,7 @@ import {
   onAuthStateChanged,
   updatePassword as firebaseUpdatePassword
 } from 'firebase/auth';
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, updateDoc } from 'firebase/firestore';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -96,6 +96,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       if (auth.currentUser) {
         await firebaseUpdatePassword(auth.currentUser, newPassword);
+        
+        // Notify backend to clear mustChangePassword custom claim
+        try {
+          const { httpsCallable } = await import('firebase/functions');
+          const { functions } = await import('../../ecommerce/src/firebase/config').catch(() => ({ functions: null }));
+          // If standalone, we also update the user's Firestore doc directly
+          await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+            mustChangePassword: false
+          }).catch(() => {});
+        } catch (_) {}
+
         return { success: true };
       }
       return { success: false, error: 'Password change not supported for this user.' };

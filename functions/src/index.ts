@@ -1130,8 +1130,31 @@ export const setUserRole = onCall(
 );
 
 // ─────────────────────────────────────────────────────────────
-//  TASK 9.5: Blocking Function - Prevent Public Staff Domain Sign-Up
+//  TASK 9.6: Clear mustChangePassword Claim After Password Update
 // ─────────────────────────────────────────────────────────────
+export const completePasswordChange = onCall(
+    { region: 'us-central1', cors: true },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError('unauthenticated', 'Must be signed in to complete password update.');
+        }
+
+        const uid = request.auth.uid;
+        const currentRole = request.auth.token.role || 'CASHIER';
+
+        const authAdmin = getAuth();
+        // Clear mustChangePassword while preserving role
+        await authAdmin.setCustomUserClaims(uid, { role: currentRole, mustChangePassword: false });
+
+        await db.collection('users').doc(uid).set({
+            mustChangePassword: false,
+            passwordChangedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log(`[completePasswordChange] User ${uid} successfully cleared mustChangePassword flag.`);
+        return { success: true };
+    }
+);
 export const blockStaffDomainSelfSignup = beforeUserCreated(async (event) => {
     const user = event.data;
     const email = user?.email?.toLowerCase() || '';
@@ -1164,17 +1187,10 @@ interface CreateOrderCustomerInput {
 const DEFAULT_DELIVERY_FEE = 1500;
 
 export const createOrder = onCall(
-    { region: 'us-central1', cors: true, enforceAppCheck: false }, // Enforced via context check with debug fallback
+    { region: 'us-central1', cors: true, enforceAppCheck: true },
     async (request) => {
         if (!request.auth) {
             throw new HttpsError('unauthenticated', 'Must be signed in to place an order.');
-        }
-
-        // App Check verification (soft enforcement allowing emulator/dev tokens)
-        if (process.env.FUNCTIONS_EMULATOR !== 'true' && process.env.NODE_ENV === 'production') {
-            if (!request.app) {
-                throw new HttpsError('failed-precondition', 'The request was rejected due to missing App Check token.');
-            }
         }
 
         const userId = request.auth.uid;
@@ -1374,22 +1390,19 @@ export const createOrder = onCall(
 
             transaction.set(orderDocRef, orderData);
 
-            // Record idempotency lock in transaction
+            // Record idempotency lock in transaction with 24-hour TTL expiry
+            const expiresAt = new Timestamp(now.seconds + 86400, now.nanoseconds);
             transaction.set(idempotencyRef, {
                 userId,
                 orderId: newOrderId,
                 orderDocId: orderDocRef.id,
                 total: computedTotal,
-                createdAt: now
+                createdAt: now,
+                expiresAt
             });
 
             return { orderId: newOrderId, id: orderDocRef.id, total: computedTotal, idempotentReplay: false };
         });
-
-        console.log(`[createOrder] Order created server-side: ${result.orderId} (Total: ${result.total}) for user ${userId}`);
-        return { success: true, ...result };
-    }
-);
 
         console.log(`[createOrder] Order created server-side: ${result.orderId} (Total: ${result.total}) for user ${userId}`);
         return { success: true, ...result };

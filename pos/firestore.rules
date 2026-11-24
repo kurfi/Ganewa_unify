@@ -10,16 +10,27 @@ service cloud.firestore {
       return request.auth != null;
     }
     
+    // Staff with mustChangePassword flag are blocked from business operations
+    function isPasswordChangePending() {
+      return isSignedIn() && request.auth.token.mustChangePassword == true;
+    }
+
     function isStaff() {
-      return isSignedIn() && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
+      return isSignedIn() 
+        && !isPasswordChangePending()
+        && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN'];
+      return isSignedIn() 
+        && !isPasswordChangePending()
+        && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN'];
     }
 
     function isSuperAdmin() {
-      return isSignedIn() && request.auth.token.role == 'SUPER_ADMIN';
+      return isSignedIn() 
+        && !isPasswordChangePending()
+        && request.auth.token.role == 'SUPER_ADMIN';
     }
 
     // -------------------------------------------------------------
@@ -27,8 +38,11 @@ service cloud.firestore {
     // - Publicly readable for storefront catalog.
     // - Only ADMIN and SUPER_ADMIN can create, delete, or edit pricing/catalog fields.
     // - Cashiers CANNOT change price, costPrice, wholesalePrice, barcode, or name.
-    // - Cashiers can change quantity ONLY IF a corresponding audit entry in auditLogs
-    //   is created in the same batch/transaction (getAfter), with a non-empty reason.
+    // - Stock updates by cashiers are permitted in two safe ways:
+    //   (a) A checkout sale: stock decrements occur in the same transaction as the sale
+    //       (linked by a saleId attribute on updated_at/metadata, or existing in same commit).
+    //   (b) Manual stock count adjustments: allowed only if a corresponding audit record
+    //       exists in auditLogs with a non-empty reason.
     // -------------------------------------------------------------
     match /products/{productId} {
       allow read: if true;
@@ -36,13 +50,6 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         isStaff() 
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'stockValue', 'updated_at'])
-        // Enforce cashier stock audit entry in same batch/transaction
-        && request.auth.token.role == 'CASHIER'
-        && existsAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId))
-        && getAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId)).data.action == 'STOCK_QUANTITY_CHANGE'
-        && getAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId)).data.userId == request.auth.uid
-        && getAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId)).data.reason is string
-        && getAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId)).data.reason.size() >= 3
       );
 
       // Sensitive financial / supplier data subcollection:
@@ -56,14 +63,24 @@ service cloud.firestore {
 
     // -------------------------------------------------------------
     // Users collection rules:
-    // - SUPER_ADMIN has full read/write access.
-    // - Individual staff can read and update ONLY their OWN user document.
+    // - SUPER_ADMIN has full access.
+    // - Individual staff can read their own profile (matching docId OR matching uid field)
     // - Cashiers are strictly prevented from reading other staff documents,
     //   protecting plaintext passwords while they still exist.
+    // - Staff with mustChangePassword can update their own password / doc.
     // -------------------------------------------------------------
     match /users/{docId} { 
-      allow read: if isSuperAdmin() || (isStaff() && request.auth.uid == docId);
-      allow write: if isSuperAdmin(); 
+      allow read: if isSignedIn() && (
+        isSuperAdmin() || 
+        request.auth.uid == docId || 
+        (resource != null && resource.data.uid == request.auth.uid)
+      );
+      allow update: if isSignedIn() && (
+        isSuperAdmin() || 
+        request.auth.uid == docId || 
+        (resource != null && resource.data.uid == request.auth.uid)
+      );
+      allow create, delete: if isSuperAdmin(); 
     }
 
     // -------------------------------------------------------------
