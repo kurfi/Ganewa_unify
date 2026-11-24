@@ -17,6 +17,7 @@ export function useInventory(currentUser: User | null) {
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [formData, setFormData] = useState<Partial<Product>>({
         name: '',
+        categoryId: '',
         category: '',
         buyPrice: 0,
         sellPrice: 0,
@@ -144,6 +145,7 @@ export function useInventory(currentUser: User | null) {
                 const newProduct: Product = {
                     id: newId,
                     name: data.name || '',
+                    categoryId: data.categoryId || '',
                     category: data.category || '',
                     buyPrice: Number(data.buyPrice) || 0,
                     sellPrice: Number(data.sellPrice) || 0,

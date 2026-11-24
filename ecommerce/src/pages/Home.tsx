@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Package, Search, X, ShoppingCart } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { db } from '../firebase/config';
-import { collection, query, where, getDocs, doc, getDoc, Timestamp } from 'firebase/firestore';
-import type { Product } from '../types';
+import { collection, query, where, getDocs, doc, getDoc, Timestamp, orderBy } from 'firebase/firestore';
+import type { Product, Category } from '../types';
 
 import Navbar from '../components/Navbar';
 import Hero from '../components/Hero';
@@ -40,8 +40,9 @@ const getCategoryMetadata = (cat: string) => {
 
 export default function Home() {
     const [allProducts, setAllProducts] = useState<Product[]>([]);
+    const [categories, setCategories] = useState<Category[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeCategory, setActiveCategory] = useState('All');
+    const [activeCategoryId, setActiveCategoryId] = useState('All');
     const [loading, setLoading] = useState(true);
     const [visibleCount, setVisibleCount] = useState(24);
     const { totalItems } = useCart();
@@ -85,6 +86,23 @@ export default function Home() {
                 
                 setAllProducts(prods);
 
+                // 2b. Fetch active categories from shared 'categories' collection
+                try {
+                    const catQuery = query(
+                        collection(db, 'categories'),
+                        where('active', '==', true),
+                        orderBy('sortOrder', 'asc')
+                    );
+                    const catSnap = await getDocs(catQuery);
+                    const cats: Category[] = catSnap.docs.map(d => ({
+                        id: d.id,
+                        ...d.data()
+                    } as Category));
+                    setCategories(cats);
+                } catch (catErr) {
+                    console.warn("Could not load categories collection:", catErr);
+                }
+
                 // 3. Cache the fetched result in sessionStorage
                 try {
                     sessionStorage.setItem(CACHE_KEY, JSON.stringify({
@@ -108,7 +126,7 @@ export default function Home() {
         setVisibleCount(24);
     }, [activeCategory, searchQuery]);
 
-    const categories = ['All', 'General', 'Grains, Noodles & Staples', 'Beverages (Drinks & Water)', 'Other/Miscellineous', 'Household & Insect Control', 'Seasonings, Condiments & Oil', 'Milk & Dairy Products', 'BISCUIT', 'Hot Drinks (Tea, Coffee & Cocoa)', 'FLOUR', 'VASELINE', 'STELLA', 'Personal Care (Hair, Skin & Oral)', 'Soap & Detergent'];
+    const categoryList = ['All', ...categories.map(c => c.name)];
     
     // Select featured products (explicitly admin-tagged as featured, with fallback to well-stocked products with photos)
     const featuredProducts = (() => {
@@ -130,9 +148,14 @@ export default function Home() {
         const qty = typeof p.quantity === 'number' && isFinite(p.quantity) ? p.quantity : 0;
         if (qty <= 0) return false;
 
-        // Filter by selected category
-        if (activeCategory !== 'All' && p.category !== activeCategory) {
-            return false;
+        // Filter by selected category (matches categoryId if present, or legacy category name)
+        if (activeCategory !== 'All') {
+            const selectedCatObj = categories.find(c => c.name === activeCategory);
+            const matchesId = selectedCatObj && p.categoryId === selectedCatObj.id;
+            const matchesName = p.category === activeCategory;
+            if (!matchesId && !matchesName) {
+                return false;
+            }
         }
 
         const name = (p.name || '').toLowerCase();
@@ -215,14 +238,14 @@ export default function Home() {
                 setSearchQuery={setSearchQuery}
                 activeCategory={activeCategory}
                 setActiveCategory={setActiveCategory}
-                categories={categories}
+                categories={categoryList}
                 getCategoryMetadata={getCategoryMetadata}
             />
 
             {/* Filters Bar (Desktop only) */}
             <section className="hidden sm:block px-2 sm:px-4 md:px-12 py-4 relative sm:sticky sm:top-[80px] z-40 glass-nav border-b border-slate-100/80">
                 <div className="flex flex-wrap gap-2 py-1 max-w-7xl mx-auto">
-                    {categories.map(cat => {
+                    {categoryList.map(cat => {
                         const { label, emoji } = getCategoryMetadata(cat);
                         const isActive = activeCategory === cat;
                         return (
