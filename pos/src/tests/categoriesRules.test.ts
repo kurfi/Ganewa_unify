@@ -10,7 +10,7 @@ import * as path from 'path';
 
 let testEnv: RulesTestEnvironment;
 
-const PROJECT_ID = 'demo-ganewa-categories-rules-test';
+const PROJECT_ID = 'demo-ganewa';
 const RULES_PATH = path.resolve(__dirname, '../../firestore.rules');
 
 beforeAll(async () => {
@@ -23,7 +23,7 @@ beforeAll(async () => {
             port: 8080
         }
     });
-});
+}, 30000);
 
 afterAll(async () => {
     if (testEnv) {
@@ -39,7 +39,7 @@ beforeEach(async () => {
 
 describe('Category Rules on Firestore Emulator (pos/firestore.rules)', () => {
     it('CASHIER CANNOT CREATE CATEGORY: cashier is denied create', async () => {
-        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER', mustChangePassword: false }).firestore();
         await assertFails(
             cashier.collection('categories').doc('cat_drinks').set({
                 name: 'Drinks',
@@ -61,7 +61,7 @@ describe('Category Rules on Firestore Emulator (pos/firestore.rules)', () => {
             });
         });
 
-        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER', mustChangePassword: false }).firestore();
         await assertFails(
             cashier.collection('categories').doc('cat_drinks').update({
                 name: 'Cold Drinks'
@@ -79,14 +79,14 @@ describe('Category Rules on Firestore Emulator (pos/firestore.rules)', () => {
             });
         });
 
-        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER', mustChangePassword: false }).firestore();
         await assertFails(
             cashier.collection('categories').doc('cat_drinks').delete()
         );
     });
 
     it('ADMIN CAN CREATE, UPDATE AND DELETE CATEGORIES: admin succeeds', async () => {
-        const admin = testEnv.authenticatedContext('admin_1', { role: 'ADMIN' }).firestore();
+        const admin = testEnv.authenticatedContext('admin_1', { role: 'ADMIN', mustChangePassword: false }).firestore();
 
         // 1. Create
         await assertSucceeds(
@@ -112,7 +112,7 @@ describe('Category Rules on Firestore Emulator (pos/firestore.rules)', () => {
     });
 
     it('SUPER_ADMIN CAN CREATE, UPDATE AND DELETE CATEGORIES: super_admin succeeds', async () => {
-        const superAdmin = testEnv.authenticatedContext('super_1', { role: 'SUPER_ADMIN' }).firestore();
+        const superAdmin = testEnv.authenticatedContext('super_1', { role: 'SUPER_ADMIN', mustChangePassword: false }).firestore();
 
         await assertSucceeds(
             superAdmin.collection('categories').doc('cat_bakery').set({
@@ -187,7 +187,7 @@ describe('Category Rules on Firestore Emulator (pos/firestore.rules)', () => {
             });
         });
 
-        const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
+        const cashier = testEnv.authenticatedContext('cashier_staff', { role: 'CASHIER', mustChangePassword: false }).firestore();
         // Staff can read hidden category
         await assertSucceeds(cashier.collection('categories').doc('inactive_cat').get());
         // Staff can list all categories without active filter

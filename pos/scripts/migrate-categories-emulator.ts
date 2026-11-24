@@ -1,37 +1,30 @@
 #!/usr/bin/env npx tsx
 /**
- * Emulator-Only Category Migration Script
+ * Emulator-Only Category Migration Script (Admin SDK)
  *
- * Runs strictly against the Firebase Local Emulator (demo-ganewa / localhost:8080).
- * Safe, idempotent, resumable.
+ * Runs strictly against the Firebase Local Emulator.
+ * Refuses to run unless FIRESTORE_EMULATOR_HOST is set.
  *
  * Usage:
  *   npx tsx scripts/migrate-categories-emulator.ts --dry-run
  *   npx tsx scripts/migrate-categories-emulator.ts --execute
  */
 
-import { initializeApp } from 'firebase/app';
-import {
-    getFirestore,
-    connectFirestoreEmulator,
-    collection,
-    getDocs,
-    doc,
-    setDoc,
-    writeBatch
-} from 'firebase/firestore';
+// 1. Strict guard: Refuse to run unless FIRESTORE_EMULATOR_HOST is explicitly set
+if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    console.error('ERROR: Refusing to run! FIRESTORE_EMULATOR_HOST environment variable is not set.');
+    console.error('This script is strictly for emulator use (e.g. export FIRESTORE_EMULATOR_HOST="127.0.0.1:8080").');
+    process.exit(1);
+}
 
-// Force emulator environment variables
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
-const firebaseConfig = {
-    projectId: 'demo-ganewa',
-    apiKey: 'fake-api-key-for-emulator'
-};
+if (!getApps().length) {
+    initializeApp({ projectId: 'demo-ganewa' });
+}
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-connectFirestoreEmulator(db, '127.0.0.1', 8080);
+const db = getFirestore();
 
 const STANDARD_CATEGORIES = [
     'Beverages (Drinks & Water)',
@@ -71,12 +64,12 @@ function slugify(text: string): string {
 
 async function run() {
     const isExecute = process.argv.includes('--execute');
-    console.log(`\n=== Unified Categories Migration (Emulator Only) ===`);
-    console.log(`Firestore Emulator: ${process.env.FIRESTORE_EMULATOR_HOST}`);
+    console.log(`\n=== Unified Categories Migration (Admin SDK - Emulator Only) ===`);
+    console.log(`FIRESTORE_EMULATOR_HOST: ${process.env.FIRESTORE_EMULATOR_HOST}`);
     console.log(`Mode: ${isExecute ? 'EXECUTE (REAL WRITES)' : 'DRY RUN (INSPECTION ONLY)'}\n`);
 
     // 1. Fetch categories
-    const catSnap = await getDocs(collection(db, 'categories'));
+    const catSnap = await db.collection('categories').get();
     const catMap = new Map<string, { id: string; name: string }>();
     catSnap.docs.forEach(d => {
         const data = d.data();
@@ -91,7 +84,7 @@ async function run() {
     missingStandards.forEach(c => console.log(`  + ${c}`));
 
     // 2. Scan products
-    const prodSnap = await getDocs(collection(db, 'products'));
+    const prodSnap = await db.collection('products').get();
     console.log(`\nScanning ${prodSnap.size} products...`);
 
     const distinctCategoryMap = new Map<string, { count: number; samples: string[] }>();
@@ -141,14 +134,14 @@ async function run() {
     }
 
     // 3. Execution
-    console.log(`\nExecuting migration...`);
+    console.log(`\nExecuting migration via Admin SDK batching...`);
     let categoriesCreated = 0;
     let currentOrder = catSnap.size;
 
     for (const std of missingStandards) {
         currentOrder++;
-        const newRef = doc(collection(db, 'categories'));
-        await setDoc(newRef, {
+        const newRef = db.collection('categories').doc();
+        await newRef.set({
             name: std,
             slug: slugify(std),
             oldSlugs: [],
@@ -161,7 +154,7 @@ async function run() {
         categoriesCreated++;
     }
 
-    let batch = writeBatch(db);
+    let batch = db.batch();
     let batchCount = 0;
     let productsUpdated = 0;
 
@@ -182,7 +175,7 @@ async function run() {
         if (targetName) {
             const targetCat = catMap.get(targetName.toLowerCase());
             if (targetCat && (p.categoryId !== targetCat.id || p.category !== targetCat.name)) {
-                batch.update(doc(db, 'products', d.id), {
+                batch.update(db.doc(`products/${d.id}`), {
                     categoryId: targetCat.id,
                     category: targetCat.name,
                     updated_at: new Date().toISOString()
@@ -192,7 +185,7 @@ async function run() {
 
                 if (batchCount >= 500) {
                     await batch.commit();
-                    batch = writeBatch(db);
+                    batch = db.batch();
                     batchCount = 0;
                 }
             }

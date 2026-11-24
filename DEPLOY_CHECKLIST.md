@@ -131,6 +131,25 @@ This section details the zero-downtime transition from legacy department/categor
 
 ### Step 8: Deploy PWAs (POS & E-commerce Storefront)
 Build and deploy both frontends:
+
+> **SEO Branch Integration Note**:
+> Because a Single Page Application (SPA) running in the browser cannot emit real HTTP 301 status headers, historical SEO redirects must be baked into Firebase Hosting at build/deploy time.
+> The build script queries active categories with non-empty `oldSlugs` and appends `redirects` entries into `firebase.json`:
+> ```json
+> {
+>   "hosting": {
+>     "redirects": [
+>       {
+>         "source": "/category/:oldSlug",
+>         "destination": "/category/:canonicalSlug",
+>         "type": 301
+>       }
+>     ]
+>   }
+> }
+> ```
+> At runtime within the SPA, `resolveCategoryBySlug(slug, categories)` performs client-side fallback navigation (`navigate('/category/' + category.slug, { replace: true })`) when an old slug URL is loaded.
+
 ```bash
 # POS
 cd pos
