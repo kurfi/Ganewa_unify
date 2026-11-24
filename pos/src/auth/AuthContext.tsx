@@ -1,12 +1,18 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { db } from '../firebase/config';
-import { collection, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
+import {
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  updatePassword as firebaseUpdatePassword
+} from 'firebase/auth';
+import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 
 interface AuthContextType {
   currentUser: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   changePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
   isAdmin: boolean;
@@ -17,52 +23,79 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const savedUser = sessionStorage.getItem('ganewa_auth_user');
-    return savedUser ? JSON.parse(savedUser) : null;
-  });
-  const [loading, setLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const login = async (username: string, password: string) => {
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const tokenResult = await firebaseUser.getIdTokenResult();
+          const roleFromClaim = (tokenResult.claims.role as UserRole) || undefined;
+
+          // Fetch user metadata from Firestore
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          const userData = userDoc.exists() ? userDoc.data() : {};
+
+          const resolvedRole = roleFromClaim || (userData.role as UserRole) || UserRole.CASHIER;
+
+          setCurrentUser({
+            id: firebaseUser.uid,
+            username: userData.username || firebaseUser.email?.split('@')[0] || 'staff',
+            name: userData.name || firebaseUser.displayName || 'Staff Member',
+            role: resolvedRole,
+            active: userData.active !== false,
+            created_at: userData.created_at || new Date().toISOString()
+          } as User);
+        } catch (err) {
+          console.error('[AuthContext] Failed to load user profile:', err);
+          setCurrentUser(null);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const login = async (usernameOrEmail: string, password: string) => {
     setLoading(true);
     try {
-      let user: User | null = null;
-      
-      const q = query(
-        collection(db, 'users'),
-        where('username', '==', username)
-      );
-      const snapshot = await getDocs(q);
-      
-      if (!snapshot.empty) {
-        const docSnap = snapshot.docs[0];
-        user = { id: docSnap.id, ...docSnap.data() } as User;
+      let email = usernameOrEmail.trim();
+
+      // If entered a plain username, resolve email from Firestore users collection
+      if (!email.includes('@')) {
+        const q = query(collection(db, 'users'), where('username', '==', email));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const docData = snapshot.docs[0].data();
+          email = docData.email || `${email}@ganewa.store`;
+        } else {
+          email = `${email}@ganewa.store`;
+        }
       }
 
-      if (user && user.password === password) {
-        setCurrentUser(user);
-        sessionStorage.setItem('ganewa_auth_user', JSON.stringify(user));
-        return { success: true };
-      }
-
-      return { success: false, error: 'Invalid username or password' };
+      await signInWithEmailAndPassword(auth, email, password);
+      return { success: true };
     } catch (error: any) {
-      console.error("Login failed:", error);
-      return { success: false, error: 'Authentication failed. Please try again.' };
+      console.error("[AuthContext] Firebase Login failed:", error);
+      return { success: false, error: error.message || 'Authentication failed. Please try again.' };
     } finally {
       setLoading(false);
     }
   };
 
   const logout = async () => {
+    await firebaseSignOut(auth);
     setCurrentUser(null);
-    sessionStorage.removeItem('ganewa_auth_user');
   };
 
   const changePassword = async (newPassword: string) => {
     try {
-      if (currentUser && currentUser.id) {
-        await updateDoc(doc(db, 'users', currentUser.id), { password: newPassword });
+      if (auth.currentUser) {
+        await firebaseUpdatePassword(auth.currentUser, newPassword);
         return { success: true };
       }
       return { success: false, error: 'Password change not supported for this user.' };

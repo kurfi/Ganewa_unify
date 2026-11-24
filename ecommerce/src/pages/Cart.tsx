@@ -325,129 +325,35 @@ export default function Cart() {
                 }, 0);
             }
 
-            // Create a reference for the new order document (auto-generated ID)
-            const orderDocRef = doc(collection(db, 'orders'));
-
-            // Run stock validation and order creation inside a transaction
-            await runTransaction(db, async (transaction) => {
-                let resolvedLinkedPosCustomerId = profile?.linkedPosCustomerId || null;
-
-                // Validate credit limit if checkout method is credit
-                if (checkoutMethod === 'credit') {
-                    if (!user) throw new Error('NOT_AUTHENTICATED');
-                    const userRef = doc(db, 'shopUsers', user.uid);
-                    const userSnap = await transaction.get(userRef);
-                    if (!userSnap.exists()) {
-                        throw new Error('USER_PROFILE_NOT_FOUND');
-                    }
-                    const userData = userSnap.data();
-                    if (!userData.linkedPosCustomerId) {
-                        throw new Error('NOT_LINKED');
-                    }
-                    resolvedLinkedPosCustomerId = userData.linkedPosCustomerId;
-                    const creditInfo = userData.creditInfo;
-                    if (!creditInfo || creditInfo.creditLimit <= 0) {
-                        throw new Error('CREDIT_NOT_ENABLED');
-                    }
-                    const effectiveAvailable = creditInfo.availableCredit - dbPendingCreditTotal;
-                    if (effectiveAvailable < balanceRemaining) {
-                        throw new Error(`INSUFFICIENT_CREDIT:${effectiveAvailable}`);
-                    }
-                }
-
-                const productUpdates = [];
-
-                // 1. Read all product documents first
-                for (const item of cartItems) {
-                    const productRef = doc(db, 'products', item.id!);
-                    const productSnap = await transaction.get(productRef);
-                    
-                    if (!productSnap.exists()) {
-                        throw new Error(`PRODUCT_NOT_FOUND:${item.name}`);
-                    }
-                    
-                    const dbQty = productSnap.data().quantity || 0;
-                    if (dbQty < item.cartQuantity) {
-                        throw new Error(`INSUFFICIENT_STOCK:${item.name}:${dbQty}`);
-                    }
-
-                    productUpdates.push({
-                        ref: productRef,
-                        newQty: dbQty - item.cartQuantity
-                    });
-                }
-
-                // 2. Perform all updates and write the order
-                for (const update of productUpdates) {
-                    transaction.update(update.ref, { quantity: update.newQty });
-                }
-
-                // Resolve selected bank account for proof/deposit orders
-                const selectedAccount = (checkoutMethod === 'proof' || wantsPartial) && selectedBankAccountId
-                    ? bankAccounts.find(a => a.id === selectedBankAccountId) ?? null
-                    : null;
-
-                const paymentsList = amountPaidNow <= 0 ? [] : [{
-                    amount: amountPaidNow,
-                    method: 'transfer' as const,
-                    proofUrl,
-                    bankAccount: selectedAccount ? {
-                        id: selectedAccount.id,
-                        bankName: selectedAccount.bankName,
-                        accountNo: selectedAccount.accountNo
-                    } : null,
-                    recordedBy: 'customer' as const,
-                    status: 'pending' as const,
-                    note: wantsPartial ? 'Deposit at checkout' : 'Paid in full at checkout',
-                    createdAt: now
-                }];
-
-                transaction.set(orderDocRef, {
-                    orderId: newOrderId,
-                    userId: user!.uid,
-                    linkedPosCustomerId: resolvedLinkedPosCustomerId,
-                    items: cartItems.map((item: any) => {
-                        const finalPrice = getProductPrice(item, item.cartQuantity);
-                        return {
-                            id: item.id,
-                            name: item.name,
-                            price: finalPrice,
-                            originalPrice: item.sellPrice || 0,
-                            quantity: item.cartQuantity,
-                            photo: item.photo || null
-                        };
-                    }),
-                    originalSubtotal: originalSubtotal,
-                    discountApplied: discountApplied,
-                    total: subtotal,
-                    customer: {
-                        name: formData.name,
-                        phone: formData.phone,
-                        address: checkoutMethod === 'pickup' ? 'PICKUP' : formData.address,
-                        email: formData.email || null
-                    },
-                    method: checkoutMethod,
-                    status: 'pending',
-                    createdAt: serverTimestamp(),
-                    proofOfPayment: proofUrl,
-                    paidToBankAccount: selectedAccount
-                        ? { id: selectedAccount.id, bankName: selectedAccount.bankName, accountNo: selectedAccount.accountNo }
-                        : null,
-                    isPartialPayment: wantsPartial,
-                    amountPaid: amountPaidNow,
-                    balanceRemaining: balanceRemaining,
-                    paymentStatus: paymentStatus,
-                    minDepositAmount: allowsPartial ? minDeposit : null,
-                    payments: paymentsList
-                });
+            // Call the secure server-side createOrder Cloud Function
+            const createOrderFn = httpsCallable<any, { success: boolean; orderId: string; id: string; total: number }>(functions, 'createOrder');
+            const result = await createOrderFn({
+                items: cartItems.map(item => ({
+                    id: item.id!,
+                    quantity: item.cartQuantity
+                })),
+                customer: {
+                    name: formData.name,
+                    phone: formData.phone,
+                    address: checkoutMethod === 'pickup' ? 'PICKUP' : formData.address,
+                    email: formData.email || undefined
+                },
+                method: checkoutMethod,
+                notes: `Checkout via ${checkoutMethod}`,
+                amountPaidNow,
+                proofUrl: proofUrl || null,
+                selectedBankAccountId: selectedBankAccountId || null,
+                wantsPartial
             });
+
+            const confirmedOrderId = result.data.orderId;
 
             // Persist the selected account for the success screen before clearing state
             if ((checkoutMethod === 'proof' || wantsPartial) && selectedBankAccountId) {
                 const acc = bankAccounts.find(a => a.id === selectedBankAccountId);
                 if (acc) setSubmittedBankAccount({ id: acc.id, bankName: acc.bankName, accountNo: acc.accountNo, accountName: acc.accountName });
             }
-            setOrderId(newOrderId);
+            setOrderId(confirmedOrderId);
             clearCart();
             setIsPartialPayment(false);
             setDepositAmount('');

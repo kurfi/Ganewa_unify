@@ -4,6 +4,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp, getApps } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue, AggregateField, Timestamp } from 'firebase-admin/firestore';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
@@ -1083,6 +1084,210 @@ export const syncUserCreditInfo = onCall(
                 availableCredit,
             }
         };
+    }
+);
+
+// ─────────────────────────────────────────────────────────────
+//  TASK 9: Admin Role Management (Custom Claims)
+// ─────────────────────────────────────────────────────────────
+export const setUserRole = onCall(
+    { region: 'us-central1', cors: true },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError('unauthenticated', 'Must be signed in to manage user roles.');
+        }
+
+        const callerEmail = request.auth.token.email;
+        const callerRole = request.auth.token.role;
+
+        // Only store email or SUPER_ADMIN / ADMIN can assign roles
+        const isAuthorized = callerEmail === STORE_EMAIL || callerRole === 'SUPER_ADMIN' || callerRole === 'ADMIN';
+        if (!isAuthorized) {
+            throw new HttpsError('permission-denied', 'Only administrators can assign roles.');
+        }
+
+        const { targetUid, role } = request.data as { targetUid: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'CASHIER' | 'USER' };
+        if (!targetUid || !role) {
+            throw new HttpsError('invalid-argument', 'targetUid and role are required.');
+        }
+
+        const validRoles = ['SUPER_ADMIN', 'ADMIN', 'CASHIER', 'USER'];
+        if (!validRoles.includes(role)) {
+            throw new HttpsError('invalid-argument', `Invalid role: ${role}`);
+        }
+
+        const authAdmin = getAuth();
+        await authAdmin.setCustomUserClaims(targetUid, { role });
+
+        // Update role in Firestore users collection
+        await db.collection('users').doc(targetUid).set({
+            role,
+            updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log(`[setUserRole] User ${targetUid} role set to ${role} by ${callerEmail}`);
+        return { success: true, targetUid, role };
+    }
+);
+
+// ─────────────────────────────────────────────────────────────
+//  TASK 10: Server-side Order Creation (Safe Checkout)
+// ─────────────────────────────────────────────────────────────
+interface CreateOrderItemInput {
+    id: string;
+    quantity: number;
+}
+
+interface CreateOrderCustomerInput {
+    name: string;
+    phone: string;
+    address: string;
+    email?: string;
+}
+
+export const createOrder = onCall(
+    { region: 'us-central1', cors: true },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError('unauthenticated', 'Must be signed in to place an order.');
+        }
+
+        const userId = request.auth.uid;
+        const {
+            items,
+            customer,
+            method,
+            notes,
+            amountPaidNow = 0,
+            proofUrl = null,
+            selectedBankAccountId = null,
+            wantsPartial = false
+        } = request.data as {
+            items: CreateOrderItemInput[];
+            customer: CreateOrderCustomerInput;
+            method: 'pickup' | 'delivery' | 'proof' | 'credit';
+            notes?: string;
+            amountPaidNow?: number;
+            proofUrl?: string | null;
+            selectedBankAccountId?: string | null;
+            wantsPartial?: boolean;
+        };
+
+        if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
+            throw new HttpsError('invalid-argument', 'Order must contain between 1 and 50 items.');
+        }
+
+        if (!customer || !customer.name || !customer.phone) {
+            throw new HttpsError('invalid-argument', 'Customer name and phone are required.');
+        }
+
+        const orderDocRef = db.collection('orders').doc();
+        const now = Timestamp.now();
+
+        const result = await db.runTransaction(async (transaction) => {
+            // Check user profile for linked customer and credit info
+            const userRef = db.collection('shopUsers').doc(userId);
+            const userSnap = await transaction.get(userRef);
+            let resolvedLinkedPosCustomerId: string | null = null;
+
+            if (userSnap.exists) {
+                const userData = userSnap.data() || {};
+                resolvedLinkedPosCustomerId = userData.linkedPosCustomerId || null;
+            }
+
+            // Read all products from Firestore to enforce server-side prices and stock
+            let computedTotal = 0;
+            const orderItems = [];
+            const productUpdates: { ref: FirebaseFirestore.DocumentReference; newQty: number }[] = [];
+
+            for (const itemInput of items) {
+                if (!itemInput.id || itemInput.quantity <= 0) {
+                    throw new HttpsError('invalid-argument', 'Invalid item id or quantity.');
+                }
+
+                const productRef = db.collection('products').doc(itemInput.id);
+                const productSnap = await transaction.get(productRef);
+
+                if (!productSnap.exists) {
+                    throw new HttpsError('not-found', `Product ${itemInput.id} not found.`);
+                }
+
+                const prodData = productSnap.data() || {};
+                const stock = Number(prodData.quantity) || 0;
+                if (stock < itemInput.quantity) {
+                    throw new HttpsError('failed-precondition', `Insufficient stock for product ${prodData.name || itemInput.id}. Available: ${stock}`);
+                }
+
+                const serverSellPrice = Number(prodData.sellPrice) || 0;
+                const wholesalePrice = Number(prodData.wholesalePrice) || 0;
+                const wholesaleThreshold = Number(prodData.wholesaleThreshold) || 0;
+
+                // Server-calculated pricing
+                const itemPrice = (wholesaleThreshold > 0 && wholesalePrice > 0 && itemInput.quantity >= wholesaleThreshold)
+                    ? wholesalePrice
+                    : serverSellPrice;
+
+                computedTotal += itemPrice * itemInput.quantity;
+
+                orderItems.push({
+                    id: itemInput.id,
+                    name: prodData.name || 'Unknown Item',
+                    price: itemPrice,
+                    originalPrice: serverSellPrice,
+                    quantity: itemInput.quantity,
+                    photo: prodData.photo || null
+                });
+
+                productUpdates.push({
+                    ref: productRef,
+                    newQty: stock - itemInput.quantity
+                });
+            }
+
+            // Deduct stock
+            for (const update of productUpdates) {
+                transaction.update(update.ref, { quantity: update.newQty });
+            }
+
+            const newOrderId = `ORD-${Date.now().toString().slice(-6)}`;
+
+            const orderData: any = {
+                orderId: newOrderId,
+                userId,
+                linkedPosCustomerId: resolvedLinkedPosCustomerId,
+                items: orderItems,
+                originalSubtotal: computedTotal,
+                discountApplied: 0,
+                total: computedTotal,
+                customer: {
+                    name: customer.name,
+                    phone: customer.phone,
+                    address: method === 'pickup' ? 'PICKUP' : customer.address,
+                    email: customer.email || null
+                },
+                method,
+                status: 'pending',
+                notes: notes || '',
+                createdAt: now,
+                updatedAt: now,
+                balanceRemaining: Math.max(0, computedTotal - amountPaidNow),
+                payments: amountPaidNow > 0 ? [{
+                    amount: amountPaidNow,
+                    method: 'transfer',
+                    proofUrl: proofUrl || null,
+                    recordedBy: 'customer',
+                    status: 'pending',
+                    createdAt: now
+                }] : []
+            };
+
+            transaction.set(orderDocRef, orderData);
+
+            return { orderId: newOrderId, id: orderDocRef.id, total: computedTotal };
+        });
+
+        console.log(`[createOrder] Order created server-side: ${result.orderId} (Total: ${result.total}) for user ${userId}`);
+        return { success: true, ...result };
     }
 );
 
