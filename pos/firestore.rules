@@ -12,24 +12,29 @@ service cloud.firestore {
     
     // Staff with mustChangePassword flag are blocked from business operations
     function isPasswordChangePending() {
-      return isSignedIn() && request.auth.token.mustChangePassword == true;
+      return isSignedIn() 
+        && ('mustChangePassword' in request.auth.token)
+        && request.auth.token.mustChangePassword == true;
     }
 
     function isStaff() {
       return isSignedIn() 
         && !isPasswordChangePending()
+        && ('role' in request.auth.token)
         && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
     }
 
     function isAdmin() {
       return isSignedIn() 
         && !isPasswordChangePending()
+        && ('role' in request.auth.token)
         && request.auth.token.role in ['SUPER_ADMIN', 'ADMIN'];
     }
 
     function isSuperAdmin() {
       return isSignedIn() 
         && !isPasswordChangePending()
+        && ('role' in request.auth.token)
         && request.auth.token.role == 'SUPER_ADMIN';
     }
 

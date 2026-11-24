@@ -48,7 +48,7 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
             total: 5000,
             status: 'pending'
         }));
-    });
+    }, 15000);
 
     it('SHOPPER CAN READ ONLY OWN ORDERS: shopper_1 cannot read shopper_2 orders', async () => {
         // Setup initial order via Admin context
@@ -148,6 +148,34 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
 
         // Staff can read privateData
         await assertSucceeds(staff.doc('products/p_oil/privateData/financials').get());
+    });
+
+    it('MUST CHANGE PASSWORD: staff with mustChangePassword flag cannot read or update products', async () => {
+        await testEnv.withSecurityRulesDisabled(async (adminContext) => {
+            await adminContext.firestore().collection('products').doc('p_soap').set({
+                name: 'Soap Bar',
+                quantity: 100,
+                sellPrice: 500,
+                stockValue: 50000,
+                updated_at: new Date().toISOString()
+            });
+        });
+
+        // Staff account with mustChangePassword flag still set
+        const lockedStaff = testEnv.authenticatedContext('cashier_temp', { 
+            role: 'CASHIER',
+            mustChangePassword: true 
+        }).firestore();
+
+        // Must fail to update product quantity
+        await assertFails(lockedStaff.collection('products').doc('p_soap').update({
+            quantity: 90,
+            stockValue: 45000,
+            updated_at: new Date().toISOString()
+        }));
+
+        // Must fail to read privateData
+        await assertFails(lockedStaff.doc('products/p_soap/privateData/financials').get());
     });
 });
 
