@@ -97,7 +97,18 @@ service cloud.firestore {
     match /suppliers/{docId} { allow read, write: if isStaff(); }
     match /returns/{docId} { allow read, write: if isStaff(); }
     match /returnedItems/{docId} { allow read, write: if isStaff(); }
+    // Deprecated: kept for backwards compatibility with live POS until migration completes
     match /departments/{docId} { allow read, write: if isStaff(); }
+    
+    // Categories:
+    // - Storefront and public can read active categories only.
+    // - Staff can read all categories (including hidden).
+    // - Only ADMIN and SUPER_ADMIN can create, update, or delete categories.
+    // - Nobody except staff can write.
+    match /categories/{categoryId} {
+      allow read: if isStaff() || resource.data.active == true;
+      allow write: if isAdmin();
+    }
     match /cashBook/{docId} { allow read, write: if isStaff(); }
     match /supplierPayments/{docId} { allow read, write: if isStaff(); }
     match /auditLogs/{docId} { allow read, write: if isStaff(); }

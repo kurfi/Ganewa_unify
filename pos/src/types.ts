@@ -77,7 +77,8 @@ export interface Product {
   id?: string;
   name: string;
   nameLower?: string;
-  category: string;
+  categoryId?: string;       // Source of truth for product-to-category link
+  category: string;         // Display/search copy of category name
   barcode?: string;          // Optional EAN/UPC/QR barcode string for scanner lookup
   buyPrice: number; // Cost price
   sellPrice: number; // Retail price
@@ -227,6 +228,22 @@ export interface SupplierPayment {
   amount: number;
   paymentMethod: PaymentMethod;
   note?: string;
+  created_at?: string;
+  updated_at?: string;
+  version?: number;
+  deviceId?: string;
+  deleted?: boolean;
+}
+
+export interface Category {
+  id?: string;
+  name: string;
+  slug: string;
+  oldSlugs?: string[];       // Previous slugs preserved for URL redirect / SEO stability
+  parentId?: string;
+  sortOrder: number;
+  active: boolean;
+  image?: string;
   created_at?: string;
   updated_at?: string;
   version?: number;

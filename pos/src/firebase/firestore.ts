@@ -95,7 +95,7 @@ export const purchaseService = {
     add: (purchase: Omit<Purchase, 'id'>) => createDocument('purchases', purchase),
 };
 
-// Departments
-export const departmentService = {
-    getAll: () => getCollection('departments'),
+// Categories
+export const categoryService = {
+    getAll: () => getCollection('categories'),
 };

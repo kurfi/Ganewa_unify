@@ -12,7 +12,7 @@ export const PRODUCT_CATEGORIES = [
   "Eggs & Poultry",
   "Baking Supplies",
   "Stationery",
-  "Other/Miscellineous"
+  "Other / Miscellaneous"
 ] as const;
 
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
