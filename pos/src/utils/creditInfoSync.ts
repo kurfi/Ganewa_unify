@@ -10,7 +10,7 @@
  * - Finds the linked ecommerce UID by querying shopUsers where linkedPosCustomerId == customer.id
  *   (the link was stored on the shopUsers doc when the user redeemed the link code).
  * - Fire-and-forget: callers do not need to await this — a failure here does NOT roll back
- *   the local Dexie transaction that triggered it.
+ *   the sale transaction that triggered it.
  * - Idempotent: repeated calls with the same data produce the same result.
  */
 
@@ -38,7 +38,7 @@ export interface CreditInfo {
  * Syncs credit info for a customer to their linked shopUsers document.
  * Safe to call after any operation that changes currentDebt or creditLimit.
  *
- * @param customer - The updated customer record from Dexie.
+ * @param customer - The updated customer record.
  */
 export async function syncCreditInfoToShopUser(customer: Customer, targetUid?: string): Promise<void> {
   if (!customer.id) return;

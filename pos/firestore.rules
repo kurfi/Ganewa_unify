@@ -10,7 +10,6 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    // Check if user has staff custom claims or is the legacy store account
     function isStaff() {
       return isSignedIn() && (
         request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com' ||
@@ -25,19 +24,40 @@ service cloud.firestore {
       );
     }
 
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'ganewashoppingmallkurfi@gmail.com' ||
+        request.auth.token.role == 'SUPER_ADMIN'
+      );
+    }
+
     // -------------------------------------------------------------
-    // Products: Publicly readable, strictly writable only by staff
-    // (Storefront client writes and price tampering are forbidden)
+    // Products:
+    // - Publicly readable for storefront catalog.
+    // - Cashiers can only update stock quantities (quantity, stockValue, updated_at).
+    //   Cashiers CANNOT change price, costPrice, wholesalePrice, barcode, or name.
+    // - Only ADMIN and SUPER_ADMIN can create, delete, or edit pricing/catalog fields.
     // -------------------------------------------------------------
     match /products/{productId} {
       allow read: if true;
-      allow write: if isStaff();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'stockValue', 'updated_at'])
+      );
+
+      // Sensitive financial / supplier data subcollection restricted strictly to staff
+      match /privateData/{docId} {
+        allow read, write: if isStaff();
+      }
     }
 
     // -------------------------------------------------------------
     // POS Private Collections: Accessible only by staff
     // -------------------------------------------------------------
-    match /users/{docId} { allow read, write: if isStaff(); }
+    match /users/{docId} { 
+      allow read: if isStaff();
+      allow write: if isSuperAdmin(); 
+    }
     match /customers/{docId} { allow read, write: if isStaff(); }
     match /sales/{docId} { allow read, write: if isStaff(); }
     match /expenses/{docId} { allow read, write: if isStaff(); }
@@ -115,23 +135,12 @@ service cloud.firestore {
     }
 
     // Orders: 
-    // - Direct client creation strictly requires:
-    //   * Signed-in user matching order userId
-    //   * Initial status must be 'pending'
-    //   * Mandatory fields: orderId, userId, items, total, customer, method, status
-    //   * Size limits: items length <= 50
-    // - Staff can read, update, delete orders
-    // - Shoppers can read only their own orders
+    // - CLIENT CREATION, UPDATE, AND DELETION ARE COMPLETELY FORBIDDEN.
+    // - Orders are created exclusively server-side via createOrder Cloud Function (Admin SDK).
+    // - Staff can read, update status, and manage orders.
+    // - Customers / shoppers can read ONLY their own orders (userId == request.auth.uid).
     match /orders/{orderId} {
-      allow create: if isSignedIn()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.status == 'pending'
-        && request.resource.data.keys().hasAll(['orderId', 'userId', 'items', 'total', 'customer', 'method', 'status'])
-        && request.resource.data.items is list
-        && request.resource.data.items.size() > 0
-        && request.resource.data.items.size() <= 50
-        && request.resource.data.total is number
-        && request.resource.data.total >= 0;
+      allow create: if false;
       allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isStaff());
       allow update, delete: if isStaff();
     }

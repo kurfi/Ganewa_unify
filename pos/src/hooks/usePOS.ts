@@ -141,6 +141,12 @@ export function usePOS({
 
     const handleCheckout = async (method: PaymentMethod, multipayEntries: { method: PaymentMethod; amount: string }[] = [], amountPaid?: number) => {
         if (isProcessing) return;
+
+        if (!navigator.onLine) {
+            showToast('No internet connection: cannot complete sale. POS checkout requires an active connection to ensure stock consistency.', 'error');
+            return;
+        }
+
         setIsProcessing(true);
 
         if (cart.length === 0) {

@@ -1100,10 +1100,10 @@ export const setUserRole = onCall(
         const callerEmail = request.auth.token.email;
         const callerRole = request.auth.token.role;
 
-        // Only store email or SUPER_ADMIN / ADMIN can assign roles
-        const isAuthorized = callerEmail === STORE_EMAIL || callerRole === 'SUPER_ADMIN' || callerRole === 'ADMIN';
-        if (!isAuthorized) {
-            throw new HttpsError('permission-denied', 'Only administrators can assign roles.');
+        // Strictly restricted to SUPER_ADMIN callers only (or bootstrap store email)
+        const isSuperAdmin = callerEmail === STORE_EMAIL || callerRole === 'SUPER_ADMIN';
+        if (!isSuperAdmin) {
+            throw new HttpsError('permission-denied', 'Only a SUPER_ADMIN can assign or change roles.');
         }
 
         const { targetUid, role } = request.data as { targetUid: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'CASHIER' | 'USER' };
@@ -1145,6 +1145,8 @@ interface CreateOrderCustomerInput {
     email?: string;
 }
 
+const STANDARD_DELIVERY_FEE = 1500; // Flat delivery fee calculated strictly server-side
+
 export const createOrder = onCall(
     { region: 'us-central1', cors: true },
     async (request) => {
@@ -1161,7 +1163,8 @@ export const createOrder = onCall(
             amountPaidNow = 0,
             proofUrl = null,
             selectedBankAccountId = null,
-            wantsPartial = false
+            wantsPartial = false,
+            idempotencyKey
         } = request.data as {
             items: CreateOrderItemInput[];
             customer: CreateOrderCustomerInput;
@@ -1171,21 +1174,60 @@ export const createOrder = onCall(
             proofUrl?: string | null;
             selectedBankAccountId?: string | null;
             wantsPartial?: boolean;
+            idempotencyKey?: string;
         };
 
         if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
-            throw new HttpsError('invalid-argument', 'Order must contain between 1 and 50 items.');
+            throw new HttpsError('invalid-argument', 'Order must contain between 1 and 50 item types.');
         }
 
-        if (!customer || !customer.name || !customer.phone) {
+        if (!customer || !customer.name?.trim() || !customer.phone?.trim()) {
             throw new HttpsError('invalid-argument', 'Customer name and phone are required.');
+        }
+
+        // 1. Merge duplicate product IDs and validate integer quantities
+        const mergedQuantities = new Map<string, number>();
+        for (const item of items) {
+            if (!item.id || typeof item.id !== 'string') {
+                throw new HttpsError('invalid-argument', 'Valid product ID is required.');
+            }
+            if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 500) {
+                throw new HttpsError('invalid-argument', `Invalid quantity for item ${item.id}. Must be an integer between 1 and 500.`);
+            }
+            const existing = mergedQuantities.get(item.id) || 0;
+            const updated = existing + item.quantity;
+            if (updated > 500) {
+                throw new HttpsError('invalid-argument', `Total quantity for product ${item.id} exceeds maximum allowable limit of 500.`);
+            }
+            mergedQuantities.set(item.id, updated);
+        }
+
+        // 2. Check idempotency key if provided
+        if (idempotencyKey) {
+            const existingOrderQuery = await db.collection('orders')
+                .where('idempotencyKey', '==', idempotencyKey)
+                .where('userId', '==', userId)
+                .limit(1)
+                .get();
+
+            if (!existingOrderQuery.empty) {
+                const existing = existingOrderQuery.docs[0].data();
+                console.log(`[createOrder] Duplicate request caught by idempotencyKey: ${idempotencyKey}`);
+                return {
+                    success: true,
+                    orderId: existing.orderId,
+                    id: existingOrderQuery.docs[0].id,
+                    total: existing.total,
+                    idempotentReplay: true
+                };
+            }
         }
 
         const orderDocRef = db.collection('orders').doc();
         const now = Timestamp.now();
 
         const result = await db.runTransaction(async (transaction) => {
-            // Check user profile for linked customer and credit info
+            // Check user profile for linked customer
             const userRef = db.collection('shopUsers').doc(userId);
             const userSnap = await transaction.get(userRef);
             let resolvedLinkedPosCustomerId: string | null = null;
@@ -1195,27 +1237,32 @@ export const createOrder = onCall(
                 resolvedLinkedPosCustomerId = userData.linkedPosCustomerId || null;
             }
 
-            // Read all products from Firestore to enforce server-side prices and stock
-            let computedTotal = 0;
+            // Read all product documents first
+            let computedSubtotal = 0;
             const orderItems = [];
             const productUpdates: { ref: FirebaseFirestore.DocumentReference; newQty: number }[] = [];
 
-            for (const itemInput of items) {
-                if (!itemInput.id || itemInput.quantity <= 0) {
-                    throw new HttpsError('invalid-argument', 'Invalid item id or quantity.');
-                }
-
-                const productRef = db.collection('products').doc(itemInput.id);
+            for (const [productId, quantity] of mergedQuantities.entries()) {
+                const productRef = db.collection('products').doc(productId);
                 const productSnap = await transaction.get(productRef);
 
                 if (!productSnap.exists) {
-                    throw new HttpsError('not-found', `Product ${itemInput.id} not found.`);
+                    throw new HttpsError('not-found', `Product ${productId} not found.`);
                 }
 
                 const prodData = productSnap.data() || {};
-                const stock = Number(prodData.quantity) || 0;
-                if (stock < itemInput.quantity) {
-                    throw new HttpsError('failed-precondition', `Insufficient stock for product ${prodData.name || itemInput.id}. Available: ${stock}`);
+                
+                // Reject inactive products
+                if (prodData.active === false || prodData.deleted === true) {
+                    throw new HttpsError('failed-precondition', `Product ${prodData.name || productId} is no longer available.`);
+                }
+
+                const currentStock = Number(prodData.quantity) || 0;
+                if (currentStock < quantity) {
+                    throw new HttpsError(
+                        'failed-precondition',
+                        `Insufficient stock for "${prodData.name || productId}". Available: ${currentStock}, requested: ${quantity}`
+                    );
                 }
 
                 const serverSellPrice = Number(prodData.sellPrice) || 0;
@@ -1223,47 +1270,57 @@ export const createOrder = onCall(
                 const wholesaleThreshold = Number(prodData.wholesaleThreshold) || 0;
 
                 // Server-calculated pricing
-                const itemPrice = (wholesaleThreshold > 0 && wholesalePrice > 0 && itemInput.quantity >= wholesaleThreshold)
+                const itemPrice = (wholesaleThreshold > 0 && wholesalePrice > 0 && quantity >= wholesaleThreshold)
                     ? wholesalePrice
                     : serverSellPrice;
 
-                computedTotal += itemPrice * itemInput.quantity;
+                computedSubtotal += itemPrice * quantity;
 
                 orderItems.push({
-                    id: itemInput.id,
+                    id: productId,
                     name: prodData.name || 'Unknown Item',
                     price: itemPrice,
                     originalPrice: serverSellPrice,
-                    quantity: itemInput.quantity,
+                    quantity: quantity,
                     photo: prodData.photo || null
                 });
 
                 productUpdates.push({
                     ref: productRef,
-                    newQty: stock - itemInput.quantity
+                    newQty: currentStock - quantity
                 });
             }
 
-            // Deduct stock
+            // Server-side delivery fee calculation
+            const deliveryFee = method === 'delivery' ? STANDARD_DELIVERY_FEE : 0;
+            const computedTotal = computedSubtotal + deliveryFee;
+
+            // Deduct stock atomically
             for (const update of productUpdates) {
-                transaction.update(update.ref, { quantity: update.newQty });
+                transaction.update(update.ref, { 
+                    quantity: update.newQty,
+                    updated_at: FieldValue.serverTimestamp()
+                });
             }
 
             const newOrderId = `ORD-${Date.now().toString().slice(-6)}`;
 
             const orderData: any = {
                 orderId: newOrderId,
+                idempotencyKey: idempotencyKey || null,
                 userId,
                 linkedPosCustomerId: resolvedLinkedPosCustomerId,
                 items: orderItems,
-                originalSubtotal: computedTotal,
+                originalSubtotal: computedSubtotal,
+                subtotal: computedSubtotal,
+                deliveryFee,
                 discountApplied: 0,
                 total: computedTotal,
                 customer: {
-                    name: customer.name,
-                    phone: customer.phone,
-                    address: method === 'pickup' ? 'PICKUP' : customer.address,
-                    email: customer.email || null
+                    name: customer.name.trim(),
+                    phone: customer.phone.trim(),
+                    address: method === 'pickup' ? 'PICKUP' : customer.address?.trim() || '',
+                    email: customer.email?.trim() || null
                 },
                 method,
                 status: 'pending',
