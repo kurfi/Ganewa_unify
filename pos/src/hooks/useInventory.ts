@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Product, User } from '../types';
+import { Product, User, UserRole } from '../types';
 import { useToast } from '../contexts/ToastContext';
 import { useDialog } from '../contexts/DialogContext';
 import { logAudit } from '../firebase/firestoreHelpers';
@@ -39,12 +39,16 @@ export function useInventory(currentUser: User | null) {
         searchField: 'nameLower'
     });
 
-    // Efficiently load all product financials via collectionGroup query
+    // Efficiently load all product financials via collectionGroup query (admins only; cashiers skip cost reads)
     useEffect(() => {
+        const isAdminRole = currentUser?.role === UserRole.ADMIN || currentUser?.role === UserRole.SUPER_ADMIN;
+        if (!isAdminRole) {
+            return;
+        }
         fetchAllProductFinancials().then(map => {
             setFinancialsMap(map);
         }).catch(console.error);
-    }, [rawProducts]);
+    }, [rawProducts, currentUser?.role]);
 
     const products = useMemo(() => {
         // Exclude nameless records and merge with privateData financials

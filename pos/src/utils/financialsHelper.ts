@@ -11,7 +11,7 @@ export interface ProductFinancials {
 // Session-level memory cache for product financials
 let sessionFinancialsCache: Map<string, ProductFinancials> | null = null;
 let lastCacheTimestamp = 0;
-const SESSION_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour session TTL (invalidation on intake/update)
+const SESSION_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minute session TTL (admins only; invalidated on intake/update)
 
 /**
  * Invalidate the session financials cache (e.g., after purchase intake or price updates)

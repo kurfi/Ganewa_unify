@@ -38,6 +38,17 @@ service cloud.firestore {
         && request.auth.token.role == 'SUPER_ADMIN';
     }
 
+    function noCatalogFieldsChanged() {
+      return request.resource.data.get('sellPrice', null) == resource.data.get('sellPrice', null)
+        && request.resource.data.get('costPrice', null) == resource.data.get('costPrice', null)
+        && request.resource.data.get('buyPrice', null) == resource.data.get('buyPrice', null)
+        && request.resource.data.get('name', null) == resource.data.get('name', null)
+        && request.resource.data.get('barcode', null) == resource.data.get('barcode', null)
+        && request.resource.data.get('category', null) == resource.data.get('category', null)
+        && request.resource.data.get('department', null) == resource.data.get('department', null)
+        && request.resource.data.get('wholesalePrice', null) == resource.data.get('wholesalePrice', null);
+    }
+
     function isValidSaleDecrement(productId) {
       return ('lastSaleId' in request.resource.data)
         && (request.resource.data.lastSaleId is string)
@@ -76,7 +87,7 @@ service cloud.firestore {
       allow update: if (
         isAdmin() || (
           isStaff()
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
+          && noCatalogFieldsChanged()
           && (
             isValidSaleDecrement(productId)
             || isValidAuditAdjustment()

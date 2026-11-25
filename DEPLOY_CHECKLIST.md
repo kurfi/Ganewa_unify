@@ -129,6 +129,9 @@ Do **not** run the cost-field migration before the new POS build is live on all 
    npx tsx functions/src/admin/migrate-product-cost-fields.ts --force
    ```
 
+> **Security Note on `itemQuantities` Stock Rule**:
+> The checkout stock-decrement rule in `pos/firestore.rules` validates decrements against `sales/{lastSaleId}.data.itemQuantities[productId]`. Because `itemQuantities` is client-written by the POS in the same transaction as `items`, a malicious cashier could theoretically fake a quantity in `itemQuantities` (though any discrepancy between `items` and `itemQuantities` is permanently traceable in the `sales` record). Adding a server-side reconciling Cloud Function (`onDocumentCreated` on `sales/{saleId}` to verify `itemQuantities` matches `items` and flag/alert discrepancies) is recommended as a follow-up hardening step.
+
 ### Step 10: Scrub Plaintext Passwords (Post-Verification Only)
 Only after every staff member has logged in successfully and verified access:
 ```bash
