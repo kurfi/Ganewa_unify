@@ -14,22 +14,7 @@ import {
 // available inside Android WebView, so we must use the single-tab manager there.
 const isCapacitor = !!(window as any).Capacitor;
 
-// Verify required Firebase environment variables
-const requiredEnvVars = [
-    'VITE_FIREBASE_API_KEY',
-    'VITE_FIREBASE_AUTH_DOMAIN',
-    'VITE_FIREBASE_PROJECT_ID',
-    'VITE_FIREBASE_STORAGE_BUCKET',
-    'VITE_FIREBASE_MESSAGING_SENDER_ID',
-    'VITE_FIREBASE_APP_ID'
-] as const;
-
-for (const envVar of requiredEnvVars) {
-    if (!import.meta.env[envVar]) {
-        throw new Error(`[Firebase Config] Missing required environment variable: ${envVar}`);
-    }
-}
-
+// Build static Firebase config first (Vite only replaces static import.meta.env.VITE_* accesses)
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -38,6 +23,21 @@ const firebaseConfig = {
     messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
     appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
+
+const requiredConfigKeys: Array<[keyof typeof firebaseConfig, string]> = [
+    ['apiKey', 'VITE_FIREBASE_API_KEY'],
+    ['authDomain', 'VITE_FIREBASE_AUTH_DOMAIN'],
+    ['projectId', 'VITE_FIREBASE_PROJECT_ID'],
+    ['storageBucket', 'VITE_FIREBASE_STORAGE_BUCKET'],
+    ['messagingSenderId', 'VITE_FIREBASE_MESSAGING_SENDER_ID'],
+    ['appId', 'VITE_FIREBASE_APP_ID']
+];
+
+for (const [key, envName] of requiredConfigKeys) {
+    if (!firebaseConfig[key]) {
+        throw new Error(`[Firebase Config] Missing required environment variable: ${envName}`);
+    }
+}
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
