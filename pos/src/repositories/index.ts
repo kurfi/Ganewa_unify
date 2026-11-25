@@ -12,6 +12,7 @@ import {
   Supplier,
   Purchase,
   SupplierPayment,
+  Category,
   Department,
   BankAccount,
   CashBookEntry
@@ -133,6 +134,10 @@ export class SupplierPaymentRepository extends BaseRepository<SupplierPayment> {
   constructor() { super('supplierPayments'); }
 }
 
+export class CategoryRepository extends BaseRepository<Category> {
+  constructor() { super('categories'); }
+}
+
 export class DepartmentRepository extends BaseRepository<Department> {
   constructor() { super('departments'); }
 }
@@ -157,6 +162,7 @@ export const auditLogsRepo = new AuditLogRepository();
 export const suppliersRepo = new SupplierRepository();
 export const purchasesRepo = new PurchaseRepository();
 export const supplierPaymentsRepo = new SupplierPaymentRepository();
+export const categoriesRepo = new CategoryRepository();
 export const departmentsRepo = new DepartmentRepository();
 export const bankAccountsRepo = new BankAccountRepository();
 export const cashBookRepo = new CashBookRepository();

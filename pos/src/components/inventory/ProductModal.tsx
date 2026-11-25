@@ -4,7 +4,7 @@ import { useModalRegistration } from '../../contexts/ModalContext';
 import { X, Upload, Loader2, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
 import { Product, DiscountTier } from '../../types';
 import { uploadToCloudinary } from '../../services/cloudinary';
-import { PRODUCT_CATEGORIES } from '../../constants/productCategories';
+import { useActiveCategories } from '../../hooks/useActiveCategories';
 import { validateInventoryField, validateNumericField } from '../../utils/validation';
 import { ImageWithFallback } from '../ImageWithFallback';
 
@@ -25,6 +25,7 @@ export function ProductModal({
 }: ProductModalProps) {
     useModalRegistration(isModalOpen);
     const { showToast } = useToast();
+    const { categories, loading: categoriesLoading, error: categoriesError } = useActiveCategories();
     const [uploading, setUploading] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [localFormData, setLocalFormData] = useState<Partial<Product>>(initialFormData);
@@ -85,10 +86,18 @@ export function ProductModal({
     // Sync local state when modal opens or initial data changes
     useEffect(() => {
         if (isModalOpen) {
-            setLocalFormData(initialFormData);
+            let matchedCatId = initialFormData.categoryId;
+            if (!matchedCatId && initialFormData.category && categories.length > 0) {
+                const found = categories.find(c => c.name.toLowerCase() === initialFormData.category?.toLowerCase());
+                if (found) matchedCatId = found.id;
+            }
+            setLocalFormData({
+                ...initialFormData,
+                categoryId: matchedCatId || initialFormData.categoryId
+            });
             setPreviewUrl(initialFormData.photo || null);
         }
-    }, [isModalOpen, initialFormData]);
+    }, [isModalOpen, initialFormData, categories]);
 
     const handleClearPhoto = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -137,9 +146,18 @@ export function ProductModal({
         }
 
         // Validate category
-        if (!localFormData.category) {
-            showToast('Category is required', 'error');
+        if (!localFormData.categoryId && !localFormData.category) {
+            showToast('Category is required. Please select a valid category.', 'error');
             return;
+        }
+
+        // If categories are loaded, verify the category is valid
+        if (categories.length > 0) {
+            const matchedCat = categories.find(c => c.id === localFormData.categoryId || c.name === localFormData.category);
+            if (!matchedCat) {
+                showToast('The selected category does not exist. Please pick an active category.', 'error');
+                return;
+            }
         }
 
         // Validate numeric fields
@@ -228,19 +246,42 @@ export function ProductModal({
 
                         <div className="col-span-2">
                             <label className="block text-sm font-medium text-slate-700 mb-1">Category *</label>
-                            <select
-                                required
-                                className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-                                value={localFormData.category || ''}
-                                onChange={e => setLocalFormData({ ...localFormData, category: e.target.value })}
-                            >
-                                <option value="" disabled>Select a category</option>
-                                {PRODUCT_CATEGORIES.map(category => (
-                                    <option key={category} value={category}>
-                                        {category}
-                                    </option>
-                                ))}
-                            </select>
+                            {categoriesError ? (
+                                <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                                    ⚠️ Could not load categories from Firestore. Product creation is blocked until categories are loaded.
+                                </div>
+                            ) : categoriesLoading ? (
+                                <div className="p-2.5 bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg flex items-center gap-2">
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                                    Loading categories...
+                                </div>
+                            ) : categories.length === 0 ? (
+                                <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg">
+                                    ⚠️ No categories found in Firestore. Please initialize categories in Settings before adding products.
+                                </div>
+                            ) : (
+                                <select
+                                    required
+                                    className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                                    value={localFormData.categoryId || ''}
+                                    onChange={e => {
+                                        const selectedId = e.target.value;
+                                        const cat = categories.find(c => c.id === selectedId);
+                                        setLocalFormData({
+                                            ...localFormData,
+                                            categoryId: selectedId,
+                                            category: cat ? cat.name : ''
+                                        });
+                                    }}
+                                >
+                                    <option value="" disabled>Select a category</option>
+                                    {categories.map(cat => (
+                                        <option key={cat.id} value={cat.id}>
+                                            {cat.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
 
                         <div>

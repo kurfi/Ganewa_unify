@@ -8,6 +8,7 @@ import { UserManagement } from '../components/settings/UserManagement';
 import { SystemLogs } from '../components/settings/SystemLogs';
 import { EcommercePaymentConfig } from '../components/settings/EcommercePaymentConfig';
 import { DataRepair } from '../components/settings/DataRepair';
+import { CategoryManagement } from '../components/settings/CategoryManagement';
 
 const Settings: React.FC = () => {
   const { currentUser } = useAuth();
@@ -22,6 +23,7 @@ const Settings: React.FC = () => {
 
       {(currentUser?.role === UserRole.ADMIN || currentUser?.role === UserRole.SUPER_ADMIN) && (
         <>
+          <CategoryManagement />
           <EcommercePaymentConfig />
           <DataRepair />
           <UserManagement />

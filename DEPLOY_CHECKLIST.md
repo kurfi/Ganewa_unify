@@ -1,6 +1,6 @@
 # Production Deployment & Hardening Release Checklist
 
-This document details the exact, step-by-step procedure for releasing the hardened Ganewa Shopping Mall applications (`pos` and `ecommerce`) to production.
+This document details the exact, step-by-step procedure for releasing the hardened Ganewa Shopping Mall applications (`pos` and `ecommerce`) and rolling out the unified product categories to production.
 
 ---
 
@@ -30,7 +30,9 @@ Execute strictly in the following sequential order:
          ⬇️
 [4. Bootstrap 1st Super Admin] ➡️ [5. Staff Account Migration] ➡️ [6. Deploy Canonical Rules]
          ⬇️
-[7. Deploy PWAs (POS & Shop)] ➡️ [8. Smoke Tests & Verification] ➡️ [9. Scrub Plaintext Passwords]
+[7. Category Rollout & Migration] ➡️ [8. Deploy PWAs (POS & Shop)] ➡️ [9. Smoke Tests & Verification]
+         ⬇️
+[10. Scrub Plaintext Passwords]
 ```
 
 ### Step 1: Backup Production Firestore
@@ -61,60 +63,123 @@ firebase deploy --only functions --project ganewa-provision-pos
 
 ### Step 4: Bootstrap Primary Super Admin & Rotate Store Account
 Run the one-time bootstrap script you run yourself to create the first `SUPER_ADMIN`:
-
 ```bash
-# Bootstrap your primary Super Admin account (with SUPER_ADMIN custom claim)
-npx tsx src/admin/bootstrap-super-admin.ts admin@ganewa.store "YourStrongPasswordHere#"
+cd functions
+npx tsx src/admin/bootstrap-super-admin.ts \
+  --email="your-actual-superadmin@domain.com" \
+  --password="AStrongTemporaryPassword123!" \
+  --username="PrimaryAdmin"
 ```
 
-*After this step:* Log into Firebase Auth console and disable `ganewashoppingmallkurfi@gmail.com`. From this point forward, `setUserRole` accepts calls strictly from `SUPER_ADMIN` callers.
-
-### Step 5: Migrate Staff Accounts
-Run the staff migration script to create Firebase Auth accounts for staff (with username-to-email mapping `<username>@ganewa.store`):
+### Step 5: Migrate Staff Accounts to Firebase Auth
+Run the idempotent staff account migration utility:
 ```bash
-# Preview changes
+# Dry run first to verify mapping
 npx tsx src/admin/migrate-staff-accounts.ts --dry-run
 
-# Run migration (does NOT delete passwords)
+# Run migration
 npx tsx src/admin/migrate-staff-accounts.ts
 ```
 
-### Step 6: Deploy Canonical Firestore Security Rules
-Deploy the single canonical security rules file from `pos/firestore.rules`:
+### Step 6: Deploy Canonical Firestore Rules & Indexes
+Deploy `pos/firestore.rules` and `firestore.indexes.json`:
+- Contains custom-claims-based RBAC helpers (`isCashier()`, `isAdmin()`, `isSuperAdmin()`).
+- Contains `/categories/{categoryId}` rules (public reads only active categories, staff reads all, only admins write).
+- Retains `/departments/{docId}` read/write rules marked deprecated so legacy POS clients remain functional during cutover.
+- Contains composite indexes for `categories` (`active ASC, sortOrder ASC`).
+
 ```bash
-firebase deploy --only firestore:rules --project ganewa-provision-pos
+firebase deploy --only firestore:rules,firestore:indexes --project ganewa-provision-pos
 ```
 
-### Step 7: Deploy Frontends via Firebase CLI
-Deploy both PWA applications:
+---
+
+## 3. Unified Categories Rollout Section
+
+This section details the zero-downtime transition from legacy department/category strings to the shared `categories` collection and `categoryId` link.
+
+### Step 7a: Initialize Approved Standard Categories
+- Initialize the 14 approved standard categories in the shared `/categories` collection:
+  1. `Beverages (Drinks & Water)`
+  2. `Milk & Dairy Products`
+  3. `Hot Drinks (Tea, Coffee & Cocoa)`
+  4. `Grains, Noodles & Staples`
+  5. `Seasonings, Condiments & Oil`
+  6. `Snacks, Biscuits & Confectionery`
+  7. `Soap & Detergent`
+  8. `Personal Care (Hair, Skin & Oral)`
+  9. `Baby Products & Hygiene`
+  10. `Household & Insect Control`
+  11. `Eggs & Poultry`
+  12. `Baking Supplies`
+  13. `Stationery`
+  14. `Other / Miscellaneous`
+
+### Step 7b: Run Migration Dry-Run (POS Admin or CLI)
+- In POS Admin (`Settings -> Product Categories`) or via the emulator-only migration script:
+  - Run the dry run to inspect every distinct category string across all products.
+  - Verify approved mappings:
+    - `General` $\to$ `Other / Miscellaneous`
+    - `BISCUIT` $\to$ `Snacks, Biscuits & Confectionery`
+    - `FLOUR` $\to$ `Grains, Noodles & Staples`
+    - `VASELINE` $\to$ `Personal Care (Hair, Skin & Oral)`
+  - Confirm target mapping for any unmapped values (e.g. `STELLA`).
+  - Verify zero unmapped items are left unresolved.
+
+### Step 7c: Execute Product Category Migration
+- Ensure Firestore backup is taken first.
+- **Permission & Security Notice**: The restriction that only `SUPER_ADMIN` can run the category migration is enforced strictly in application code (`executeUnifiedCategoriesMigration`), not in Firestore security rules. This is because Firestore rules permit both `ADMIN` and `SUPER_ADMIN` to perform product writes, and rules cannot distinguish between the two for product catalog fields.
+- Execute `migrateUnifiedCategories(confirmed = true)`:
+  - Migrates products in batches of $\le 500$ writes.
+  - Sets `categoryId` (the source of truth) and normalizes display `category` name copy.
+  - Safe to re-run (idempotent; skips products that already have matching `categoryId` and `category`).
+
+### Step 8: Deploy PWAs (POS & E-commerce Storefront)
+Build and deploy both frontends:
+
+> **SEO Branch Integration & Firebase Hosting Redirect Limits**:
+> Because a Single Page Application (SPA) running in the browser cannot emit real HTTP 301 status headers, historical SEO redirects must be baked into Firebase Hosting at build/deploy time.
+> - **Firebase Hosting Redirect Limits**: Large `firebase.json` redirect arrays can impact deployment payload and CLI parsing — check the current Firebase Hosting limits before scaling beyond typical category counts. With 14-50 categories, typical old slug counts are small (< 100 entries).
+> - **Direct Redirect Guarantee (No Redirect Chains)**: In our data model, when a category is renamed multiple times, all previous historical slugs are stored in a flat array (`oldSlugs: string[]`). Build-time redirects map every historical slug directly to the CURRENT canonical slug (`/category/:oldSlug` $\to$ `/category/:canonicalSlug`), preventing multiple HTTP redirect hops.
+> - The build script queries active categories with non-empty `oldSlugs` and appends `redirects` entries into `firebase.json`:
+> ```json
+> {
+>   "hosting": {
+>     "redirects": [
+>       {
+>         "source": "/category/:oldSlug",
+>         "destination": "/category/:canonicalSlug",
+>         "type": 301
+>       }
+>     ]
+>   }
+> }
+> ```
+> - At runtime within the SPA, `resolveCategoryBySlug(slug, categories)` performs client-side fallback navigation (`navigate('/category/' + category.slug, { replace: true })`) if a route is visited directly without hitting the hosting redirect.
+
 ```bash
-# POS PWA
+# POS
 cd pos
 npm run build
 firebase deploy --only hosting:ganewa-provision-pos --project ganewa-provision-pos
 
-# Ecommerce Storefront
+# Storefront
 cd ../ecommerce
 npm run build
 firebase deploy --only hosting:ganewamall-shop --project ganewa-provision-pos
 ```
 
-### Step 8: Post-Deployment Smoke Tests
-1. **POS Till Login**:
-   - Sign into the POS using individual staff credentials (email/password). Verify role capabilities match (`SUPER_ADMIN`, `ADMIN`, `CASHIER`).
-   - Run the read-only IndexedDB diagnostic on each till to verify no unsynced local data remains:
-     ```ts
-     import { inspectLegacyIndexedDb } from './utils/inspectLegacyIndexedDb';
-     inspectLegacyIndexedDb().then(console.log);
-     ```
-2. **POS Checkout (Cashier Role)**:
-   - Attempt a test sale. Verify atomic invoice generation (`INV-XXXXXX`) and immediate stock deduction.
-   - Verify cashier cannot change prices or cost prices in the product catalogue.
-   - Verify cashier manual stock count changes generate audit log entries.
-3. **Storefront Checkout**:
-   - Add an item to cart and complete checkout.
-   - Verify the order is created via `createOrder` Cloud Function with server-calculated price, delivery fee, and stock reduction.
-   - Check that direct client writes to `/orders` are blocked with `PERMISSION_DENIED`.
+### Step 9: Post-Deployment Smoke Tests & Verification
+1. **POS Tests**:
+   - Log in as cashier $\to$ verify unable to add/edit/delete categories in `Settings`.
+   - Log in as admin $\to$ create a category, edit slug, reorder, and toggle visibility.
+   - Verify category deletion is blocked if child subcategories or products still exist.
+   - Verify products can be created and edited using the dynamic category dropdown (`categoryId` set).
+2. **Storefront Tests**:
+   - Verify anonymous visitor sees only active categories.
+   - Verify clicking category filter filters products by `categoryId`.
+   - Verify changing category active/name in POS reflects in storefront without redeploy.
+   - Verify old slugs redirect cleanly via `oldSlugs` lookup.
 
 ### Step 9: Cost-Field Migration (`privateData/financials`) — Strict Release Order
 Do **not** run the cost-field migration before the new POS build is live on all tills:
@@ -132,22 +197,19 @@ Do **not** run the cost-field migration before the new POS build is live on all 
 > **Security Note on `itemQuantities` Stock Rule**:
 > The checkout stock-decrement rule in `pos/firestore.rules` validates decrements against `sales/{lastSaleId}.data.itemQuantities[productId]`. Because `itemQuantities` is client-written by the POS in the same transaction as `items`, a malicious cashier could theoretically fake a quantity in `itemQuantities` (though any discrepancy between `items` and `itemQuantities` is permanently traceable in the `sales` record). Adding a server-side reconciling Cloud Function (`onDocumentCreated` on `sales/{saleId}` to verify `itemQuantities` matches `items` and flag/alert discrepancies) is recommended as a follow-up hardening step.
 
-### Step 10: Scrub Plaintext Passwords (Post-Verification Only)
+### Step 10: Scrub Plaintext Passwords & Decommission Deprecated Rules (Post-Verification Only)
 Only after every staff member has logged in successfully and verified access:
 ```bash
-# 1. Take a fresh Firestore export
-gcloud firestore export gs://<your-backup-bucket>/post-migration-backup-$(date +%Y%m%d) --project=ganewa-provision-pos
-
-# 2. Preview scrub
+# Preview scrub
 npx tsx src/admin/scrub-staff-passwords.ts --dry-run
-
-# 3. Perform final scrub
+# Perform final scrub
 npx tsx src/admin/scrub-staff-passwords.ts --force
 ```
+Remove deprecated `/departments` block from `pos/firestore.rules` after confirming zero traffic to departments.
 
 ---
 
-## 3. Rollback Plan
+## 4. Rollback Plan
 
 If a critical issue occurs during release:
 

@@ -4,7 +4,7 @@ import { Upload, Download } from 'lucide-react';
 import { logAudit } from '../../firebase/firestoreHelpers';
 import { productsRepo } from '../../repositories';
 import { User, Product } from '../../types';
-import { PRODUCT_CATEGORIES } from '../../constants/productCategories';
+import { useActiveCategories } from '../../hooks/useActiveCategories';
 import { validateInventoryField } from '../../utils/validation';
 
 interface BulkImportModalProps {
@@ -16,11 +16,16 @@ interface BulkImportModalProps {
 
 export function BulkImportModal({ isBulkModalOpen, setIsBulkModalOpen, currentUser, downloadTemplate }: BulkImportModalProps) {
     const { showToast } = useToast();
+    const { categories, loading: categoriesLoading } = useActiveCategories();
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     if (!isBulkModalOpen) return null;
 
     const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (isSubmitting) return;
+        if (categories.length === 0) {
+            showToast("No active categories found. Please initialize categories before importing.", "error");
+            return;
+        }
         const file = e.target.files?.[0];
         if (!file) return;
 
@@ -44,9 +49,19 @@ export function BulkImportModal({ isBulkModalOpen, setIsBulkModalOpen, currentUs
                         return;
                     }
 
+                    const rawCategory = category?.trim() || '';
+                    const matchedCat = categories.find(c => c.name.toLowerCase() === rawCategory.toLowerCase() || c.id === rawCategory);
+                    
+                    if (!matchedCat) {
+                        showToast(`Unknown category "${rawCategory}" at line ${i + 1}. Import stopped.`, 'error');
+                        setIsSubmitting(false);
+                        return;
+                    }
+
                     productsToAdd.push({
                         name: productName,
-                        category: category?.trim() || PRODUCT_CATEGORIES[0],
+                        categoryId: matchedCat.id,
+                        category: matchedCat.name,
                         buyPrice: parseFloat(buyPrice) || 0,
                         sellPrice: parseFloat(sellPrice) || 0,
                         quantity: parseInt(quantity) || 0,

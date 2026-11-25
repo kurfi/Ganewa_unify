@@ -65,7 +65,9 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'happy-dom',
       globals: true,
-      include: ['src/**/__tests__/**/*.test.ts'],
+      testTimeout: 30000,
+      fileParallelism: false,
+      include: ['src/**/__tests__/**/*.test.ts', 'src/tests/**/*.test.ts'],
     }
   };
 });

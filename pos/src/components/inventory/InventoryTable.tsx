@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertTriangle, Edit, Trash2, Tag } from 'lucide-react';
 import { Product } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
+import { useActiveCategories } from '../../hooks/useActiveCategories';
 
 interface InventoryTableProps {
     products: Product[] | undefined;
@@ -12,6 +13,12 @@ interface InventoryTableProps {
 
 export function InventoryTable({ products, handleOpenModal, handleDelete, handleOpenLabelModal }: InventoryTableProps) {
     const { isAdmin } = useAuth();
+    const { categories } = useActiveCategories();
+    const categoryNameMap = React.useMemo(() => {
+        const m = new Map<string, string>();
+        categories.forEach(c => { if (c.id) m.set(c.id, c.name); });
+        return m;
+    }, [categories]);
     return (
         <table className="hidden md:table w-full text-left border-collapse table-fixed">
             <thead className="bg-slate-50 sticky top-0 z-10">
@@ -37,7 +44,9 @@ export function InventoryTable({ products, handleOpenModal, handleDelete, handle
                                 <div className="text-[11px] text-slate-400 font-mono">Barcode: {product.barcode}</div>
                             )}
                         </td>
-                        <td className="p-4 text-sm text-slate-600 whitespace-nowrap">{product.category}</td>
+                        <td className="p-4 text-sm text-slate-600 whitespace-nowrap">
+                            {(product.categoryId && categoryNameMap.get(product.categoryId)) || product.category || '—'}
+                        </td>
                         {isAdmin && (
                             <td className="p-4 text-sm text-slate-600 text-right whitespace-nowrap">₦{(product.buyPrice || 0).toLocaleString()}</td>
                         )}

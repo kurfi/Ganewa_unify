@@ -41,6 +41,20 @@ export enum ReturnReason {
 
 // --- Specific Interfaces ---
 
+export interface Category {
+    id?: string;
+    name: string;
+    slug: string;
+    oldSlugs?: string[];       // Previous slugs preserved for URL redirect / SEO stability
+    parentId?: string;
+    sortOrder: number;
+    active: boolean;
+    image?: string;
+    description?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
 export interface Setting {
     key: string;
     value: any;
@@ -80,7 +94,8 @@ export interface Product {
     id?: string;
     name: string;
     barcode: string;
-    category: string;
+    categoryId?: string;       // Source of truth for product-to-category link
+    category: string;         // Display/search copy of category name
     buyPrice: number; // Cost price
     sellPrice: number; // Retail price
     wholesalePrice?: number;
