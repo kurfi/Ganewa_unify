@@ -125,6 +125,14 @@
       "collectionGroup": "sales",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "customerId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "deleted", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "DESCENDING" }
       ]

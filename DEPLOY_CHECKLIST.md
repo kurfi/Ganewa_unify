@@ -135,7 +135,7 @@ Build and deploy both frontends:
 
 > **SEO Branch Integration & Firebase Hosting Redirect Limits**:
 > Because a Single Page Application (SPA) running in the browser cannot emit real HTTP 301 status headers, historical SEO redirects must be baked into Firebase Hosting at build/deploy time.
-> - **Firebase Hosting Redirect Limits**: Firebase Hosting enforces a maximum of **2,000 redirects** (or a max configuration file size limit of 100 KB for `firebase.json`). With 14-50 categories, typical old slug counts are far below this limit (< 100 entries).
+> - **Firebase Hosting Redirect Limits**: Large `firebase.json` redirect arrays can impact deployment payload and CLI parsing — check the current Firebase Hosting limits before scaling beyond typical category counts. With 14-50 categories, typical old slug counts are small (< 100 entries).
 > - **Direct Redirect Guarantee (No Redirect Chains)**: In our data model, when a category is renamed multiple times, all previous historical slugs are stored in a flat array (`oldSlugs: string[]`). Build-time redirects map every historical slug directly to the CURRENT canonical slug (`/category/:oldSlug` $\to$ `/category/:canonicalSlug`), preventing multiple HTTP redirect hops.
 > - The build script queries active categories with non-empty `oldSlugs` and appends `redirects` entries into `firebase.json`:
 > ```json
