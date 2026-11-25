@@ -3,6 +3,7 @@ import { Search, AlertTriangle, PackageCheck, X, FileText, CheckCircle2 } from '
 import { Product } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { usePaginatedCollection } from '../../hooks/usePaginatedCollection';
+import { fetchProductFinancials } from '../../utils/financialsHelper';
 
 interface ExpiredStockFormProps {
   onSubmitWriteOff: (productId: string, quantity: number, note?: string) => Promise<any>;
@@ -16,6 +17,7 @@ export function ExpiredStockForm({
   const { showToast } = useToast();
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedCostPrice, setSelectedCostPrice] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [quantity, setQuantity] = useState<string>('1');
@@ -61,18 +63,26 @@ export function ExpiredStockForm({
       setQuantity('0');
       setLocalError(`Product "${product.name}" has 0 stock available.`);
     }
+
+    // Load accurate cost from privateData/financials
+    fetchProductFinancials(product.id).then(fin => {
+      setSelectedCostPrice(fin?.costPrice ?? fin?.buyPrice ?? product.buyPrice ?? 0);
+    }).catch(() => {
+      setSelectedCostPrice(product.buyPrice ?? 0);
+    });
   };
 
   const handleClearSelection = (e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedProduct(null);
+    setSelectedCostPrice(0);
     setSearchQuery('');
     setQuantity('1');
     setLocalError(null);
   };
 
   const parsedQty = parseInt(quantity, 10) || 0;
-  const unitCost = selectedProduct?.buyPrice || 0;
+  const unitCost = selectedCostPrice || selectedProduct?.buyPrice || 0;
   const totalCostImpact = parsedQty * unitCost;
 
   const handleSubmit = async (e: React.FormEvent) => {

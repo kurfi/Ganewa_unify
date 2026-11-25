@@ -237,19 +237,37 @@ const Orders: React.FC = () => {
 
         // STEP 2 — Read ALL product documents first (no writes yet)
         const productReads: { ref: ReturnType<typeof doc>; snap: any; item: OrderItem }[] = [];
+        const productReads: Array<{ ref: any; snap: any; finSnap: any; item: any }> = [];
         for (const item of orderData.items) {
           const productRef = doc(firestoreDb, 'products', item.id);
-          const productSnap = await transaction.get(productRef);
-          productReads.push({ ref: productRef, snap: productSnap, item });
+          const finRef = doc(firestoreDb, 'products', item.id, 'privateData', 'financials');
+          const [productSnap, finSnap] = await Promise.all([
+            transaction.get(productRef),
+            transaction.get(finRef)
+          ]);
+          productReads.push({ ref: productRef, snap: productSnap, finSnap, item });
         }
 
         // STEP 3 — Perform ALL writes after all reads are complete
-        for (const { ref, snap, item } of productReads) {
+        for (const { ref, snap, finSnap, item } of productReads) {
           if (snap.exists()) {
             const dbQty = snap.data().quantity || 0;
+            const finData = finSnap?.exists() ? finSnap.data() : null;
+            const unitCost = finData?.buyPrice ?? finData?.costPrice ?? snap.data().buyPrice ?? 0;
+            const auditLogId = `audit_order_cancel_${order.id}_${item.id}`;
             transaction.update(ref, {
               quantity: dbQty + item.quantity,
-              stockValue: (dbQty + item.quantity) * (snap.data().buyPrice || 0)
+              stockValue: (dbQty + item.quantity) * unitCost,
+              auditLogId
+            });
+
+            const auditRef = doc(firestoreDb, 'auditLogs', auditLogId);
+            transaction.set(auditRef, {
+              id: auditLogId,
+              action: 'ORDER_RESTOCK',
+              details: `Restocked ${item.quantity} units of ${item.name} from cancelled order ${order.orderId}`,
+              date: new Date().toISOString(),
+              created_at: new Date().toISOString()
             });
           }
         }

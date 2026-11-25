@@ -241,12 +241,33 @@ export function NewPurchaseModal({ isOpen, onClose }: NewPurchaseModalProps) {
                     if (snap.exists()) {
                         const pData = normalizeFirestoreDates<Product>(snap.data());
                         const pRef = doc(db, 'products', item.productId);
+                        const auditLogId = `audit_purchase_${purchaseId}_${item.productId}`;
                         tx.update(pRef, {
                             quantity: (pData.quantity || 0) + item.quantity,
-                            buyPrice: item.costPrice,
                             sellPrice: item.sellingPrice,
                             stockValue: ((pData.quantity || 0) + item.quantity) * item.costPrice,
+                            auditLogId,
                             updated_at: nowIso
+                        });
+
+                        // Write financial/cost fields to privateData/financials
+                        const finRef = doc(db, 'products', item.productId, 'privateData', 'financials');
+                        tx.set(finRef, {
+                            buyPrice: item.costPrice,
+                            costPrice: item.costPrice,
+                            supplierId: selectedSupplier.id!,
+                            supplierName: selectedSupplier.companyName,
+                            updated_at: nowIso
+                        }, { merge: true });
+
+                        // Log purchase intake audit record
+                        const auditRef = doc(db, 'auditLogs', auditLogId);
+                        tx.set(auditRef, {
+                            id: auditLogId,
+                            action: 'PURCHASE_INTAKE',
+                            details: `Stock intake: ${item.quantity} units of ${item.productName} at ₦${item.costPrice}`,
+                            date: nowIso,
+                            created_at: nowIso
                         });
                     }
                 }

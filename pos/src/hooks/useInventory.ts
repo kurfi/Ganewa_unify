@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Product, User } from '../types';
 import { useToast } from '../contexts/ToastContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -6,6 +6,7 @@ import { logAudit } from '../firebase/firestoreHelpers';
 import { usePaginatedCollection } from '../hooks/usePaginatedCollection';
 import { productsRepo } from '../repositories';
 import { emitDashboardRefresh } from '../utils/dashboardRefreshSignal';
+import { fetchAllProductFinancials } from '../utils/financialsHelper';
 
 export function useInventory(currentUser: User | null) {
     const { showToast } = useToast();
@@ -13,6 +14,7 @@ export function useInventory(currentUser: User | null) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [financialsMap, setFinancialsMap] = useState<Map<string, { buyPrice: number; costPrice: number; supplierId?: string | null; supplierName?: string | null }>>(new Map());
 
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [formData, setFormData] = useState<Partial<Product>>({
@@ -37,10 +39,31 @@ export function useInventory(currentUser: User | null) {
         searchField: 'nameLower'
     });
 
-    const products = useMemo(() => {
-        // Exclude nameless records
-        return rawProducts.filter(p => !!(p.name || '').trim());
+    // Efficiently load all product financials via collectionGroup query
+    useEffect(() => {
+        fetchAllProductFinancials().then(map => {
+            setFinancialsMap(map);
+        }).catch(console.error);
     }, [rawProducts]);
+
+    const products = useMemo(() => {
+        // Exclude nameless records and merge with privateData financials
+        return rawProducts
+            .filter(p => !!(p.name || '').trim())
+            .map(p => {
+                const fin = financialsMap.get(p.id);
+                if (fin) {
+                    return {
+                        ...p,
+                        buyPrice: fin.buyPrice,
+                        costPrice: fin.costPrice,
+                        supplierId: fin.supplierId || p.supplierId,
+                        supplierName: fin.supplierName || p.supplierName,
+                    };
+                }
+                return p;
+            });
+    }, [rawProducts, financialsMap]);
 
     const handleOpenModal = (product?: Product) => {
         if (product && typeof product === 'object' && 'id' in product) {

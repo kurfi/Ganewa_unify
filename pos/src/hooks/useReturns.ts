@@ -266,6 +266,11 @@ export function useReturns() {
                     itemsToReturn.map(item => tx.get(doc(db, 'products', item.productId)))
                 );
 
+                // Read financial privateData for accurate cost valuation
+                const finSnaps = await Promise.all(
+                    itemsToReturn.map(item => tx.get(doc(db, 'products', item.productId, 'privateData', 'financials')))
+                );
+
                 // Read the original sale doc
                 const saleRef = doc(db, 'sales', originalSale.id!);
                 const saleSnap = await tx.get(saleRef);
@@ -318,8 +323,11 @@ export function useReturns() {
                 for (let i = 0; i < itemsToReturn.length; i++) {
                     const item = itemsToReturn[i];
                     const snap = productSnaps[i];
+                    const finSnap = finSnaps[i];
                     const productData = snap.exists() ? normalizeFirestoreDates<Product>(snap.data()) : null;
-                    const actualCostPrice = item.costPrice || (productData?.buyPrice ?? 0);
+                    const finData = finSnap?.exists() ? finSnap.data() : null;
+                    const unitCost = finData?.costPrice ?? finData?.buyPrice ?? productData?.buyPrice ?? 0;
+                    const actualCostPrice = item.costPrice || unitCost;
                     const valueLost = item.restockStatus === 'damaged' ? item.returnedQuantity * actualCostPrice : 0;
 
                     const returnedItemId = uuidv4();
@@ -343,10 +351,22 @@ export function useReturns() {
                     // Restock product if not damaged
                     if (item.restockStatus === 'restocked' && productData && snap.exists()) {
                         const pRef = doc(db, 'products', item.productId);
+                        const auditLogId = `audit_return_${returnedItemId}`;
                         tx.update(pRef, {
                             quantity: productData.quantity + item.returnedQuantity,
-                            stockValue: (productData.quantity + item.returnedQuantity) * (productData.buyPrice || 0),
+                            stockValue: (productData.quantity + item.returnedQuantity) * unitCost,
+                            auditLogId,
                             updated_at: nowIso
+                        });
+
+                        const auditRef = doc(db, 'auditLogs', auditLogId);
+                        tx.set(auditRef, {
+                            id: auditLogId,
+                            action: 'RETURN_RESTOCK',
+                            details: `Restocked ${item.returnedQuantity} units of ${item.productName} from return ${newReturnId}`,
+                            performedBy: currentUser?.username || 'Unknown',
+                            date: nowIso,
+                            created_at: nowIso
                         });
                     }
                 }

@@ -5,7 +5,8 @@ import {
   where,
   doc,
   writeBatch,
-  getDoc
+  getDoc,
+  collectionGroup
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { normalizeFirestoreDates } from '../firebase/firestoreHelpers';
@@ -32,9 +33,21 @@ export async function runBackfillMigration(): Promise<BackfillReport> {
 
   // --- Backfill stockValue on products ---
   try {
-    const productsSnap = await getDocs(
-      query(collection(db, 'products'), where('deleted', '==', false))
-    );
+    const [productsSnap, finSnap] = await Promise.all([
+      getDocs(query(collection(db, 'products'), where('deleted', '==', false))),
+      getDocs(collectionGroup(db, 'privateData'))
+    ]);
+
+    const finMap = new Map<string, number>();
+    finSnap.forEach(d => {
+      if (d.id === 'financials') {
+        const parentId = d.ref.parent.parent?.id;
+        if (parentId) {
+          const fData = d.data();
+          finMap.set(parentId, Number(fData.buyPrice ?? fData.costPrice) || 0);
+        }
+      }
+    });
 
     // Firestore writeBatch supports max 500 operations per batch
     let batch = writeBatch(db);
@@ -43,7 +56,7 @@ export async function runBackfillMigration(): Promise<BackfillReport> {
     for (const docSnap of productsSnap.docs) {
       const data = docSnap.data();
       const quantity = Number(data.quantity) || 0;
-      const buyPrice = Number(data.buyPrice) || 0;
+      const buyPrice = finMap.get(docSnap.id) ?? Number(data.buyPrice) || 0;
       const correctStockValue = quantity * buyPrice;
 
       // Only write if stockValue is missing or differs

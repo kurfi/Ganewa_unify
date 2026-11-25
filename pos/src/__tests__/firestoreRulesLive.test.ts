@@ -477,4 +477,55 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
             'SECURITY ALERT: Account already exists for email cashier1@ganewa.store'
         );
     });
+
+    it('STOCK RULE: sale document must include this product with quantity matching the decrement; dummy mismatched sale is rejected', async () => {
+        await testEnv.withSecurityRulesDisabled(async (admin) => {
+            await admin.firestore().collection('products').doc('p_mismatch_item').set({
+                name: 'Mismatch Verification Item',
+                quantity: 10,
+                sellPrice: 2000,
+                stockValue: 20000,
+                updated_at: new Date().toISOString()
+            });
+        });
+
+        const cashier = testEnv.authenticatedContext('cashier_mismatch', { role: 'CASHIER' }).firestore();
+        const pRef = cashier.collection('products').doc('p_mismatch_item');
+
+        // Attempt dummy sale where decrement is 3 units, but sale document specifies quantity: 1
+        await assertFails(cashier.runTransaction(async (tx) => {
+            const saleRef = cashier.collection('sales').doc('sale_fake_qty');
+            tx.set(saleRef, {
+                id: 'sale_fake_qty',
+                totalAmount: 2000,
+                items: [{ productId: 'p_mismatch_item', quantity: 1 }],
+                date: new Date().toISOString()
+            });
+            // Decrementing by 3 units while sale says 1 -> Must fail!
+            tx.update(pRef, {
+                quantity: 7,
+                stockValue: 14000,
+                lastSaleId: 'sale_fake_qty',
+                updated_at: new Date().toISOString()
+            });
+        }));
+
+        // Legitimate sale where decrement matches items quantity exactly
+        await assertSucceeds(cashier.runTransaction(async (tx) => {
+            const saleRef = cashier.collection('sales').doc('sale_correct_qty');
+            tx.set(saleRef, {
+                id: 'sale_correct_qty',
+                totalAmount: 4000,
+                items: [{ productId: 'p_mismatch_item', quantity: 2 }],
+                date: new Date().toISOString()
+            });
+            // Decrementing by 2 units while sale says 2 -> Succeeded!
+            tx.update(pRef, {
+                quantity: 8,
+                stockValue: 16000,
+                lastSaleId: 'sale_correct_qty',
+                updated_at: new Date().toISOString()
+            });
+        }));
+    });
 });

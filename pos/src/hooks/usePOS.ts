@@ -222,7 +222,12 @@ export function usePOS({
                     cart.map(item => tx.get(doc(db, 'products', item.productId)))
                 );
 
-                // 2. Read Customer doc (if applicable)
+                // 2. Read financial subcollection docs (products/{id}/privateData/financials) for accurate cost snapshotting
+                const finSnaps = await Promise.all(
+                    cart.map(item => tx.get(doc(db, 'products', item.productId, 'privateData', 'financials')))
+                );
+
+                // 3. Read Customer doc (if applicable)
                 let customerSnap = null;
                 const customerRef = selectedCustomer?.id ? doc(db, 'customers', selectedCustomer.id) : null;
                 if (customerRef) {
@@ -241,9 +246,14 @@ export function usePOS({
                     if (productData.quantity < item.quantity) {
                         throw new Error(`Insufficient stock for "${item.productName}". Available: ${productData.quantity}`);
                     }
+
+                    // Read cost from privateData/financials snapshot
+                    const finData = finSnaps[i]?.exists() ? finSnaps[i].data() : null;
+                    const accurateCostPrice = finData?.costPrice ?? finData?.buyPrice ?? productData.buyPrice ?? item.price;
+
                     finalItems.push({
                         ...item,
-                        costPrice: productData.buyPrice || item.price
+                        costPrice: accurateCostPrice
                     });
                 }
 
@@ -267,15 +277,18 @@ export function usePOS({
                 }
 
                 // ── WRITE PHASE ──
-                // 1. Update product stock
+                // 1. Update product stock (linked with saleId for security rules verification)
                 for (let i = 0; i < cart.length; i++) {
                     const item = cart[i];
                     const snap = productSnaps[i];
                     const productData = snap.data() as Product;
+                    const finData = finSnaps[i]?.exists() ? finSnaps[i].data() : null;
+                    const unitCost = finData?.buyPrice ?? finData?.costPrice ?? productData.buyPrice ?? 0;
                     const pRef = doc(db, 'products', item.productId);
                     tx.update(pRef, {
                         quantity: productData.quantity - item.quantity,
-                        stockValue: (productData.quantity - item.quantity) * (productData.buyPrice || 0),
+                        stockValue: (productData.quantity - item.quantity) * unitCost,
+                        lastSaleId: saleId,
                         updated_at: nowIso
                     });
                 }

@@ -36,30 +36,49 @@ export function useStockWriteOffs(currentUser: User | null) {
       const result = await runTransaction(db, async (tx) => {
         // READ PHASE
         const productRef = doc(db, 'products', productId);
-        const productSnap = await tx.get(productRef);
+        const finRef = doc(db, 'products', productId, 'privateData', 'financials');
+        const [productSnap, finSnap] = await Promise.all([
+          tx.get(productRef),
+          tx.get(finRef)
+        ]);
 
         if (!productSnap.exists()) {
           throw new Error('Selected product does not exist.');
         }
 
         const product = normalizeFirestoreDates<Product>(productSnap.data());
+        const finData = finSnap.exists() ? finSnap.data() : null;
+        const unitCost = finData?.buyPrice ?? finData?.costPrice ?? product.buyPrice ?? 0;
 
         // VALIDATION
         if (product.quantity < quantity) {
           throw new Error(`Insufficient stock for "${product.name}". Available: ${product.quantity}`);
         }
 
-        const costImpact = roundTo2(quantity * (product.buyPrice || 0));
+        const costImpact = roundTo2(quantity * unitCost);
+        const auditLogId = `audit_${writeOffId}`;
 
         // WRITE PHASE
-        // 1. Decrement product quantity
+        // 1. Decrement product quantity with deterministic auditLogId
         tx.update(productRef, {
           quantity: product.quantity - quantity,
-          stockValue: (product.quantity - quantity) * (product.buyPrice || 0),
+          stockValue: (product.quantity - quantity) * unitCost,
+          auditLogId,
           updated_at: nowIso
         });
 
-        // 2. Create stockWriteOffs doc
+        // 2. Deterministic audit log entry
+        const auditRef = doc(db, 'auditLogs', auditLogId);
+        tx.set(auditRef, {
+          id: auditLogId,
+          action: 'STOCK_WRITE_OFF',
+          details: `Wrote off ${quantity} units of ${product.name}. Cost: ${costImpact}`,
+          performedBy: currentUser?.username || 'Unknown',
+          date: nowIso,
+          created_at: nowIso
+        });
+
+        // 3. Create stockWriteOffs doc
         const writeOffDocRef = doc(db, 'stockWriteOffs', writeOffId);
         const writeOffData: any = {
           id: writeOffId,

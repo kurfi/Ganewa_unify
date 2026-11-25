@@ -58,9 +58,18 @@ service cloud.firestore {
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
           && (
             // (a) Part of a checkout transaction linked to a sale document created in the same commit
+            // Validates that the sale exists in the same transaction and that the decrement matches the sold quantity
             (
               ('lastSaleId' in request.resource.data)
               && existsAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
+              && (
+                getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.items.hasAny([
+                  {'productId': productId, 'quantity': resource.data.quantity - request.resource.data.quantity}
+                ])
+                || getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.items.hasAny([
+                  {'id': productId, 'quantity': resource.data.quantity - request.resource.data.quantity}
+                ])
+              )
             )
             // (b) Manual stock count adjustment requiring a deterministic audit record in auditLogs
             || (

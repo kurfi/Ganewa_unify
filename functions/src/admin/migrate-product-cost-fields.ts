@@ -19,11 +19,20 @@ export async function migrateProductCostFields(options: { dryRun?: boolean; forc
     const isDryRun = options.dryRun ?? false;
     const isForce = options.force ?? false;
 
-    // Safety guard: Must not run against live production without explicit dry run or force
+    // Safety check 1: Marker document in settings/costFieldsMigration must exist with codeSwitched: true
+    const markerSnap = await db.doc('settings/costFieldsMigration').get();
+    if (!markerSnap.exists || markerSnap.data()?.codeSwitched !== true) {
+        throw new Error(
+            'SAFETY REFUSAL: Missing required marker document settings/costFieldsMigration with { codeSwitched: true }. ' +
+            'The data migration cannot run before frontend and backend code has been completely switched to read/write products/{id}/privateData/financials.'
+        );
+    }
+
+    // Safety check 2: Must not run against live production without explicit dry run or force
     const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
     if (!isEmulator && !isDryRun && !isForce) {
         throw new Error(
-            'SAFETY REFUSAL: The data migration must not be runnable against production before code deployment and explicit --force flag.'
+            'SAFETY REFUSAL: The data migration must not be runnable against production before explicit --force flag is passed.'
         );
     }
     console.log(`[CostMigration] Starting product cost migration... (dryRun=${isDryRun}, isEmulator=${isEmulator})`);
