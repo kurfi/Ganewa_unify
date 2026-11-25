@@ -47,7 +47,11 @@ Before running on production:
 4. Verify rules enforcement and order placement in the staging environment.
 
 ### Step 3: Deploy Cloud Functions
-Deploy the newly hardened functions (`createOrder`, `setUserRole`, `getNextInvoiceNumber`, etc.):
+Deploy the newly hardened functions (`createOrder`, `setUserRole`, `getNextInvoiceNumber`, `completePasswordChange`, `blockStaffDomainSelfSignup`):
+
+> **Verification Notice**:
+> - Real rules & concurrency tests are executed and verified on the Firestore Emulator (`pos/src/__tests__/firestoreRulesLive.test.ts`).
+> - The functions `setUserRole` and `blockStaffDomainSelfSignup` tests run against local mock logic and are marked **[NOT VERIFIED ON FULL EMULATOR]** because the Cloud Functions and Auth emulators require building functions (`tsc`), which was explicitly prohibited during this pass. They must be verified during Step 2 (Staging Rehearsal).
 ```bash
 cd functions
 npm install

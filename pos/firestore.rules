@@ -55,17 +55,19 @@ service cloud.firestore {
       allow update: if (
         isAdmin() || (
           isStaff()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'stockValue', 'updated_at'])
-        ) || (
-          isStaff()
-          && ('lastSaleId' in request.resource.data)
-          && existsAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
-        ) || (
-          isStaff()
-          && ('auditLogId' in request.resource.data)
-          && existsAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId))
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
+          && (
+            // (a) Part of a checkout transaction linked to a sale document created in the same commit
+            (
+              ('lastSaleId' in request.resource.data)
+              && existsAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
+            )
+            // (b) Manual stock count adjustment requiring a deterministic audit record in auditLogs
+            || (
+              ('auditLogId' in request.resource.data)
+              && existsAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId))
+            )
+          )
         )
       );
 

@@ -15,9 +15,18 @@ const db = getFirestore();
  * 
  * Supports dryRun (default: false unless --dry-run passed).
  */
-export async function migrateProductCostFields(options: { dryRun?: boolean } = {}) {
+export async function migrateProductCostFields(options: { dryRun?: boolean; force?: boolean } = {}) {
     const isDryRun = options.dryRun ?? false;
-    console.log(`[CostMigration] Starting product cost migration... (dryRun=${isDryRun})`);
+    const isForce = options.force ?? false;
+
+    // Safety guard: Must not run against live production without explicit dry run or force
+    const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
+    if (!isEmulator && !isDryRun && !isForce) {
+        throw new Error(
+            'SAFETY REFUSAL: The data migration must not be runnable against production before code deployment and explicit --force flag.'
+        );
+    }
+    console.log(`[CostMigration] Starting product cost migration... (dryRun=${isDryRun}, isEmulator=${isEmulator})`);
 
     const productsSnap = await db.collection('products').get();
     console.log(`[CostMigration] Found ${productsSnap.size} total product documents.`);

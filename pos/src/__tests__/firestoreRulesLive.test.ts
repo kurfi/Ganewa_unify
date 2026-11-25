@@ -11,14 +11,12 @@ import * as path from 'path';
 let testEnv: RulesTestEnvironment;
 
 const PROJECT_ID = 'demo-ganewa-rules-test';
-const RULES_PATH = path.resolve(__dirname, '../../../pos/firestore.rules');
+const RULES_PATH = path.resolve(__dirname, '../../firestore.rules');
 
 beforeAll(async () => {
-    const rules = fs.readFileSync(RULES_PATH, 'utf8');
     testEnv = await initializeTestEnvironment({
         projectId: PROJECT_ID,
         firestore: {
-            rules,
             host: '127.0.0.1',
             port: 8080
         }
@@ -90,21 +88,55 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
         const cashier = testEnv.authenticatedContext('cashier_1', { role: 'CASHIER' }).firestore();
         const pRef = cashier.collection('products').doc('p_rice');
 
-        // (a) Cashier updating ONLY quantity & stockValue (legitimate POS checkout update) succeeds
-        await assertSucceeds(pRef.update({
-            quantity: 18,
-            stockValue: 810000,
+        // (a) Cashier updating quantity WITH lastSaleId linked to an active sale in the same commit succeeds
+        await assertSucceeds(cashier.runTransaction(async (tx) => {
+            const saleRef = cashier.collection('sales').doc('sale_rice_001');
+            tx.set(saleRef, {
+                id: 'sale_rice_001',
+                totalAmount: 90000,
+                date: new Date().toISOString()
+            });
+            tx.update(pRef, {
+                quantity: 18,
+                stockValue: 810000,
+                lastSaleId: 'sale_rice_001',
+                updated_at: new Date().toISOString()
+            });
+        }));
+
+        // (b) NEGATIVE TEST 1: Cashier CANNOT decrement stock without a sale document in the same transaction
+        await assertFails(pRef.update({
+            quantity: 17,
+            stockValue: 765000,
             updated_at: new Date().toISOString()
         }));
 
-        // (b) Cashier attempting to update sellPrice fails explicitly
+        // (c) NEGATIVE TEST 2: Manual stock adjustment without an audit entry in auditLogs is rejected
         await assertFails(pRef.update({
-            sellPrice: 35000
+            quantity: 15,
+            stockValue: 675000,
+            auditLogId: 'non_existent_audit_log_id',
+            updated_at: new Date().toISOString()
         }));
 
-        // (c) Cashier attempting to rename product fails explicitly
-        await assertFails(pRef.update({
-            name: 'Discounted Rice 50kg'
+        // (d) Cashier attempting to update sellPrice fails explicitly
+        await assertFails(cashier.runTransaction(async (tx) => {
+            const saleRef = cashier.collection('sales').doc('sale_rice_002');
+            tx.set(saleRef, { id: 'sale_rice_002', totalAmount: 70000 });
+            tx.update(pRef, {
+                sellPrice: 35000,
+                lastSaleId: 'sale_rice_002'
+            });
+        }));
+
+        // (e) Cashier attempting to rename product fails explicitly
+        await assertFails(cashier.runTransaction(async (tx) => {
+            const saleRef = cashier.collection('sales').doc('sale_rice_003');
+            tx.set(saleRef, { id: 'sale_rice_003', totalAmount: 70000 });
+            tx.update(pRef, {
+                name: 'Discounted Rice 50kg',
+                lastSaleId: 'sale_rice_003'
+            });
         }));
     });
 
@@ -241,6 +273,7 @@ describe('Live Firestore Emulator Security Rules Tests', () => {
                 tx.update(cashier.collection('products').doc(productIds[i]), {
                     quantity: data.quantity - 1,
                     stockValue: (data.quantity - 1) * 100 * (i + 1),
+                    lastSaleId: 'sale_15_items',
                     updated_at: new Date().toISOString()
                 });
             }
@@ -337,6 +370,7 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
                 tx.update(pDoc, {
                     quantity: productData.quantity - 1,
                     stockValue: 0,
+                    lastSaleId: saleId,
                     updated_at: nowIso
                 });
 
@@ -377,7 +411,7 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
         });
     });
 
-    it('SETUSERROLE: rejects non-SUPER_ADMIN callers', async () => {
+    it('SETUSERROLE: rejects non-SUPER_ADMIN callers [NOT VERIFIED - MOCK UNIT LOGIC ONLY]', async () => {
         // Test role assignment logic matching setUserRole Cloud Function behavior
         const attemptSetUserRole = (callerToken: { role?: string }, targetUid: string, newRole: string) => {
             if (!callerToken || callerToken.role !== 'SUPER_ADMIN') {
@@ -409,7 +443,7 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
         });
     });
 
-    it('STAFF DOMAIN BLOCKER & MIGRATION CHECKS: rejects self-signup on staff domain and refuses to link existing account', async () => {
+    it('STAFF DOMAIN BLOCKER & MIGRATION CHECKS: rejects self-signup on staff domain and refuses to link existing account [NOT VERIFIED - MOCK UNIT LOGIC ONLY]', async () => {
         // 1. Blocker logic test (matches blockStaffDomainSelfSignup beforeUserCreated trigger)
         const validateSignupEmail = (email: string) => {
             const normalized = email.toLowerCase();

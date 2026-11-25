@@ -1,6 +1,7 @@
 import React from 'react';
 import { Edit, Trash2, Tag } from 'lucide-react';
 import { Product } from '../../types';
+import { useAuth } from '../../auth/AuthContext';
 
 interface InventoryMobileListProps {
     products: Product[] | undefined;
@@ -10,6 +11,7 @@ interface InventoryMobileListProps {
 }
 
 export function InventoryMobileList({ products, handleOpenModal, handleDelete, handleOpenLabelModal }: InventoryMobileListProps) {
+    const { isAdmin } = useAuth();
     return (
         <div className="md:hidden grid grid-cols-1 gap-4 p-4 bg-slate-50/50">
             {products?.map(product => (
@@ -23,11 +25,13 @@ export function InventoryMobileList({ products, handleOpenModal, handleDelete, h
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 border-t border-b border-slate-100 py-3">
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Cost</span>
-                            <span className="text-xs font-bold text-slate-700">₦{(product.buyPrice || 0).toLocaleString()}</span>
-                        </div>
+                    <div className={`grid ${isAdmin ? 'grid-cols-3' : 'grid-cols-2'} gap-2 border-t border-b border-slate-100 py-3`}>
+                        {isAdmin && (
+                            <div className="flex flex-col">
+                                <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Cost</span>
+                                <span className="text-xs font-bold text-slate-700">₦{(product.buyPrice || 0).toLocaleString()}</span>
+                            </div>
+                        )}
                         <div className="flex flex-col">
                             <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Wholesale</span>
                             <span className="text-xs font-bold text-blue-600">₦{(product.wholesalePrice || 0).toLocaleString()}</span>

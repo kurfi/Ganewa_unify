@@ -17,12 +17,80 @@ import {
   CashBookEntry
 } from '../types';
 
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
+
 export class CustomerRepository extends BaseRepository<Customer> {
   constructor() { super('customers'); }
 }
 
 export class ProductRepository extends BaseRepository<Product> {
   constructor() { super('products'); }
+
+  public override async getById(id: string): Promise<Product | null> {
+    const product = await super.getById(id);
+    if (!product) return null;
+
+    try {
+      // Load financial/supplier data from subcollection products/{id}/privateData/financials
+      const finDoc = await getDoc(doc(db, 'products', id, 'privateData', 'financials'));
+      if (finDoc.exists()) {
+        const finData = finDoc.data();
+        return {
+          ...product,
+          buyPrice: finData.buyPrice !== undefined ? finData.buyPrice : product.buyPrice,
+          costPrice: finData.costPrice !== undefined ? finData.costPrice : product.costPrice,
+          supplierId: finData.supplierId || product.supplierId,
+          supplierName: finData.supplierName || product.supplierName,
+        };
+      }
+    } catch {
+      // If access to privateData is restricted or offline, return base product
+    }
+    return product;
+  }
+
+  public override async create(item: Omit<Product, 'id' | 'deleted' | 'created_at' | 'updated_at'>): Promise<string> {
+    const { buyPrice, costPrice, supplierId, supplierName, ...publicData } = item as any;
+    const newId = await super.create(publicData as any);
+
+    // Save financial/supplier fields in subcollection
+    if (buyPrice !== undefined || costPrice !== undefined || supplierId || supplierName) {
+      try {
+        await setDoc(doc(db, 'products', newId, 'privateData', 'financials'), {
+          buyPrice: buyPrice ?? 0,
+          costPrice: costPrice ?? buyPrice ?? 0,
+          supplierId: supplierId || null,
+          supplierName: supplierName || null,
+          updated_at: new Date().toISOString()
+        });
+      } catch (err) {
+        console.warn('[ProductRepository] Could not write privateData/financials:', err);
+      }
+    }
+
+    return newId;
+  }
+
+  public override async update(id: string, updates: Partial<Product>): Promise<void> {
+    const { buyPrice, costPrice, supplierId, supplierName, ...publicUpdates } = updates as any;
+    if (Object.keys(publicUpdates).length > 0) {
+      await super.update(id, publicUpdates as any);
+    }
+
+    if (buyPrice !== undefined || costPrice !== undefined || supplierId !== undefined || supplierName !== undefined) {
+      try {
+        const finUpdates: any = { updated_at: new Date().toISOString() };
+        if (buyPrice !== undefined) finUpdates.buyPrice = buyPrice;
+        if (costPrice !== undefined) finUpdates.costPrice = costPrice;
+        if (supplierId !== undefined) finUpdates.supplierId = supplierId;
+        if (supplierName !== undefined) finUpdates.supplierName = supplierName;
+        await setDoc(doc(db, 'products', id, 'privateData', 'financials'), finUpdates, { merge: true });
+      } catch (err) {
+        console.warn('[ProductRepository] Could not update privateData/financials:', err);
+      }
+    }
+  }
 }
 
 export class SaleRepository extends BaseRepository<Sale> {

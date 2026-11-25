@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Edit, Trash2, Tag } from 'lucide-react';
 import { Product } from '../../types';
+import { useAuth } from '../../auth/AuthContext';
 
 interface InventoryTableProps {
     products: Product[] | undefined;
@@ -10,13 +11,16 @@ interface InventoryTableProps {
 }
 
 export function InventoryTable({ products, handleOpenModal, handleDelete, handleOpenLabelModal }: InventoryTableProps) {
+    const { isAdmin } = useAuth();
     return (
         <table className="hidden md:table w-full text-left border-collapse table-fixed">
             <thead className="bg-slate-50 sticky top-0 z-10">
                 <tr>
                     <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 w-[27%]">Product</th>
                     <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 w-[13%]">Category</th>
-                    <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-right w-[9%]">Cost</th>
+                    {isAdmin && (
+                        <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-right w-[9%]">Cost</th>
+                    )}
                     <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-right w-[10%] whitespace-nowrap">Wholesale</th>
                     <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-right w-[10%] whitespace-nowrap">Sell Price</th>
                     <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-[8%]">Stock</th>
@@ -34,7 +38,9 @@ export function InventoryTable({ products, handleOpenModal, handleDelete, handle
                             )}
                         </td>
                         <td className="p-4 text-sm text-slate-600 whitespace-nowrap">{product.category}</td>
-                        <td className="p-4 text-sm text-slate-600 text-right whitespace-nowrap">₦{(product.buyPrice || 0).toLocaleString()}</td>
+                        {isAdmin && (
+                            <td className="p-4 text-sm text-slate-600 text-right whitespace-nowrap">₦{(product.buyPrice || 0).toLocaleString()}</td>
+                        )}
                         <td className="p-4 text-sm text-blue-600 font-medium text-right whitespace-nowrap">₦{(product.wholesalePrice || 0).toLocaleString()}</td>
                         <td className="p-4 text-sm font-bold text-emerald-600 text-right whitespace-nowrap">₦{(product.sellPrice || 0).toLocaleString()}</td>
                         <td className="p-4 text-center whitespace-nowrap">
