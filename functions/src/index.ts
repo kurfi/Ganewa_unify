@@ -1201,8 +1201,6 @@ export const createOrder = onCall(
             notes,
             amountPaidNow = 0,
             proofUrl = null,
-            selectedBankAccountId = null,
-            wantsPartial = false,
             idempotencyKey
         } = request.data as {
             items: CreateOrderItemInput[];
@@ -1291,7 +1289,7 @@ export const createOrder = onCall(
 
             // Read all product documents first
             let computedSubtotal = 0;
-            const orderItems = [];
+            const orderItems: { id: string; name: string; price: number; originalPrice: number; quantity: number; photo: string | null }[] = [];
             const productUpdates: { ref: FirebaseFirestore.DocumentReference; newQty: number }[] = [];
 
             for (const [productId, quantity] of mergedQuantities.entries()) {

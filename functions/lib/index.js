@@ -1,12 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.syncUserCreditInfo = exports.syncShopUserCreditOnLink = exports.syncCustomerCreditOnWritten = exports.searchCustomerSalesPOS = exports.getCustomerSalesHistory = exports.handleBudgetAlert = exports.onProductChange = exports.reconcileCustomerDebt = exports.cleanupAuditLogs = exports.onProductStockChange = exports.recalculateRunningBalance = exports.generateReport = exports.rollupDailyStats = exports.getNextInvoiceNumber = void 0;
+exports.createOrder = exports.blockStaffDomainSelfSignup = exports.completePasswordChange = exports.setUserRole = exports.syncUserCreditInfo = exports.syncShopUserCreditOnLink = exports.syncCustomerCreditOnWritten = exports.searchCustomerSalesPOS = exports.getCustomerSalesHistory = exports.handleBudgetAlert = exports.onProductChange = exports.reconcileCustomerDebt = exports.cleanupAuditLogs = exports.onProductStockChange = exports.recalculateRunningBalance = exports.generateReport = exports.rollupDailyStats = exports.getNextInvoiceNumber = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const pubsub_1 = require("firebase-functions/v2/pubsub");
 const https_1 = require("firebase-functions/v2/https");
+const identity_1 = require("firebase-functions/v2/identity");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const v2_1 = require("firebase-functions/v2");
 const app_1 = require("firebase-admin/app");
+const auth_1 = require("firebase-admin/auth");
 const firestore_2 = require("firebase-admin/firestore");
 const date_fns_1 = require("date-fns");
 const date_fns_tz_1 = require("date-fns-tz");
@@ -845,5 +847,234 @@ exports.syncUserCreditInfo = (0, https_1.onCall)({ region: 'us-central1', cors: 
             availableCredit,
         }
     };
+});
+// ─────────────────────────────────────────────────────────────
+//  TASK 9: Admin Role Management (Custom Claims)
+// ─────────────────────────────────────────────────────────────
+exports.setUserRole = (0, https_1.onCall)({ region: 'us-central1', cors: true }, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'Must be signed in to manage user roles.');
+    }
+    const callerRole = request.auth.token.role;
+    // Strictly restricted to authenticated SUPER_ADMIN callers only (no email exceptions)
+    if (callerRole !== 'SUPER_ADMIN') {
+        throw new https_1.HttpsError('permission-denied', 'Only a verified SUPER_ADMIN can assign or change user roles.');
+    }
+    const { targetUid, role } = request.data;
+    if (!targetUid || !role) {
+        throw new https_1.HttpsError('invalid-argument', 'targetUid and role are required.');
+    }
+    const validRoles = ['SUPER_ADMIN', 'ADMIN', 'CASHIER', 'USER'];
+    if (!validRoles.includes(role)) {
+        throw new https_1.HttpsError('invalid-argument', `Invalid role: ${role}`);
+    }
+    const authAdmin = (0, auth_1.getAuth)();
+    await authAdmin.setCustomUserClaims(targetUid, { role });
+    // Update role in Firestore users collection
+    await db.collection('users').doc(targetUid).set({
+        role,
+        updatedAt: firestore_2.FieldValue.serverTimestamp()
+    }, { merge: true });
+    console.log(`[setUserRole] User ${targetUid} role set to ${role}`);
+    return { success: true, targetUid, role };
+});
+// ─────────────────────────────────────────────────────────────
+//  TASK 9.6: Clear mustChangePassword Claim After Password Update
+// ─────────────────────────────────────────────────────────────
+exports.completePasswordChange = (0, https_1.onCall)({ region: 'us-central1', cors: true }, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'Must be signed in to complete password update.');
+    }
+    const uid = request.auth.uid;
+    const currentRole = request.auth.token.role || 'CASHIER';
+    const authAdmin = (0, auth_1.getAuth)();
+    // Clear mustChangePassword while preserving role
+    await authAdmin.setCustomUserClaims(uid, { role: currentRole, mustChangePassword: false });
+    await db.collection('users').doc(uid).set({
+        mustChangePassword: false,
+        passwordChangedAt: firestore_2.FieldValue.serverTimestamp()
+    }, { merge: true });
+    console.log(`[completePasswordChange] User ${uid} successfully cleared mustChangePassword flag.`);
+    return { success: true };
+});
+exports.blockStaffDomainSelfSignup = (0, identity_1.beforeUserCreated)(async (event) => {
+    var _a;
+    const user = event.data;
+    const email = ((_a = user === null || user === void 0 ? void 0 : user.email) === null || _a === void 0 ? void 0 : _a.toLowerCase()) || '';
+    // Block any public self-registration attempting to register with the staff domain or store email
+    if (email.endsWith('@ganewa.store') || email === STORE_EMAIL) {
+        console.warn(`[blockStaffDomainSelfSignup] Rejected public self-signup attempt for staff email: ${email}`);
+        throw new identity_1.HttpsError('permission-denied', 'Staff accounts cannot be self-registered publicly. Contact your system administrator.');
+    }
+});
+const DEFAULT_DELIVERY_FEE = 1500;
+exports.createOrder = (0, https_1.onCall)({ region: 'us-central1', cors: true, enforceAppCheck: true }, async (request) => {
+    var _a, _b;
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'Must be signed in to place an order.');
+    }
+    const userId = request.auth.uid;
+    const { items, customer, method, notes, amountPaidNow = 0, proofUrl = null, idempotencyKey } = request.data;
+    // Idempotency key is strictly required
+    if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+        throw new https_1.HttpsError('invalid-argument', 'idempotencyKey is required for safe checkout.');
+    }
+    if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
+        throw new https_1.HttpsError('invalid-argument', 'Order must contain between 1 and 50 item types.');
+    }
+    if (!customer || !((_a = customer.name) === null || _a === void 0 ? void 0 : _a.trim()) || !((_b = customer.phone) === null || _b === void 0 ? void 0 : _b.trim())) {
+        throw new https_1.HttpsError('invalid-argument', 'Customer name and phone are required.');
+    }
+    // 1. Merge duplicate product IDs and validate integer quantities
+    const mergedQuantities = new Map();
+    for (const item of items) {
+        if (!item.id || typeof item.id !== 'string') {
+            throw new https_1.HttpsError('invalid-argument', 'Valid product ID is required.');
+        }
+        if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 500) {
+            throw new https_1.HttpsError('invalid-argument', `Invalid quantity for item ${item.id}. Must be an integer between 1 and 500.`);
+        }
+        const existing = mergedQuantities.get(item.id) || 0;
+        const updated = existing + item.quantity;
+        if (updated > 500) {
+            throw new https_1.HttpsError('invalid-argument', `Total quantity for product ${item.id} exceeds maximum allowable limit of 500.`);
+        }
+        mergedQuantities.set(item.id, updated);
+    }
+    // Document ID for idempotency record: keyed by uid + idempotencyKey to prevent race conditions
+    const idempotencyDocId = `${userId}_${idempotencyKey.trim()}`;
+    const idempotencyRef = db.collection('orderIdempotency').doc(idempotencyDocId);
+    const orderDocRef = db.collection('orders').doc();
+    const now = firestore_2.Timestamp.now();
+    const result = await db.runTransaction(async (transaction) => {
+        var _a, _b, _c, _d;
+        // Check idempotency record inside transaction first
+        const idempSnap = await transaction.get(idempotencyRef);
+        if (idempSnap.exists) {
+            const idempData = idempSnap.data() || {};
+            console.log(`[createOrder] Duplicate request caught by idempotencyKey document: ${idempotencyKey}`);
+            return {
+                orderId: idempData.orderId,
+                id: idempData.orderDocId,
+                total: idempData.total,
+                idempotentReplay: true
+            };
+        }
+        // Fetch dynamic delivery fee from settings document
+        let deliveryFee = 0;
+        if (method === 'delivery') {
+            const settingsSnap = await transaction.get(db.doc('settings/storeConfig'));
+            deliveryFee = settingsSnap.exists && Number.isFinite((_a = settingsSnap.data()) === null || _a === void 0 ? void 0 : _a.deliveryFee)
+                ? Number((_b = settingsSnap.data()) === null || _b === void 0 ? void 0 : _b.deliveryFee)
+                : DEFAULT_DELIVERY_FEE;
+        }
+        else {
+            // Pickup and other non-delivery methods are strictly free
+            deliveryFee = 0;
+        }
+        // Check user profile for linked customer
+        const userRef = db.collection('shopUsers').doc(userId);
+        const userSnap = await transaction.get(userRef);
+        let resolvedLinkedPosCustomerId = null;
+        if (userSnap.exists) {
+            const userData = userSnap.data() || {};
+            resolvedLinkedPosCustomerId = userData.linkedPosCustomerId || null;
+        }
+        // Read all product documents first
+        let computedSubtotal = 0;
+        const orderItems = [];
+        const productUpdates = [];
+        for (const [productId, quantity] of mergedQuantities.entries()) {
+            const productRef = db.collection('products').doc(productId);
+            const productSnap = await transaction.get(productRef);
+            if (!productSnap.exists) {
+                throw new https_1.HttpsError('not-found', `Product ${productId} not found.`);
+            }
+            const prodData = productSnap.data() || {};
+            // Reject inactive or deleted products
+            if (prodData.active === false || prodData.deleted === true) {
+                throw new https_1.HttpsError('failed-precondition', `Product ${prodData.name || productId} is no longer available.`);
+            }
+            const currentStock = Number(prodData.quantity) || 0;
+            if (currentStock < quantity) {
+                throw new https_1.HttpsError('failed-precondition', `Insufficient stock for "${prodData.name || productId}". Available: ${currentStock}, requested: ${quantity}`);
+            }
+            const serverSellPrice = Number(prodData.sellPrice) || 0;
+            const wholesalePrice = Number(prodData.wholesalePrice) || 0;
+            const wholesaleThreshold = Number(prodData.wholesaleThreshold) || 0;
+            // Server-calculated pricing
+            const itemPrice = (wholesaleThreshold > 0 && wholesalePrice > 0 && quantity >= wholesaleThreshold)
+                ? wholesalePrice
+                : serverSellPrice;
+            computedSubtotal += itemPrice * quantity;
+            orderItems.push({
+                id: productId,
+                name: prodData.name || 'Unknown Item',
+                price: itemPrice,
+                originalPrice: serverSellPrice,
+                quantity: quantity,
+                photo: prodData.photo || null
+            });
+            productUpdates.push({
+                ref: productRef,
+                newQty: currentStock - quantity
+            });
+        }
+        const computedTotal = computedSubtotal + deliveryFee;
+        // Deduct stock atomically
+        for (const update of productUpdates) {
+            transaction.update(update.ref, {
+                quantity: update.newQty,
+                updated_at: firestore_2.FieldValue.serverTimestamp()
+            });
+        }
+        const newOrderId = `ORD-${Date.now().toString().slice(-6)}`;
+        const orderData = {
+            orderId: newOrderId,
+            idempotencyKey: idempotencyKey.trim(),
+            userId,
+            linkedPosCustomerId: resolvedLinkedPosCustomerId,
+            items: orderItems,
+            originalSubtotal: computedSubtotal,
+            subtotal: computedSubtotal,
+            deliveryFee,
+            discountApplied: 0,
+            total: computedTotal,
+            customer: {
+                name: customer.name.trim(),
+                phone: customer.phone.trim(),
+                address: method === 'pickup' ? 'PICKUP' : ((_c = customer.address) === null || _c === void 0 ? void 0 : _c.trim()) || '',
+                email: ((_d = customer.email) === null || _d === void 0 ? void 0 : _d.trim()) || null
+            },
+            method,
+            status: 'pending',
+            notes: notes || '',
+            createdAt: now,
+            updatedAt: now,
+            balanceRemaining: Math.max(0, computedTotal - amountPaidNow),
+            payments: amountPaidNow > 0 ? [{
+                    amount: amountPaidNow,
+                    method: 'transfer',
+                    proofUrl: proofUrl || null,
+                    recordedBy: 'customer',
+                    status: 'pending',
+                    createdAt: now
+                }] : []
+        };
+        transaction.set(orderDocRef, orderData);
+        // Record idempotency lock in transaction with 24-hour TTL expiry
+        const expiresAt = new firestore_2.Timestamp(now.seconds + 86400, now.nanoseconds);
+        transaction.set(idempotencyRef, {
+            userId,
+            orderId: newOrderId,
+            orderDocId: orderDocRef.id,
+            total: computedTotal,
+            createdAt: now,
+            expiresAt
+        });
+        return { orderId: newOrderId, id: orderDocRef.id, total: computedTotal, idempotentReplay: false };
+    });
+    console.log(`[createOrder] Order created server-side: ${result.orderId} (Total: ${result.total}) for user ${userId}`);
+    return Object.assign({ success: true }, result);
 });
 //# sourceMappingURL=index.js.map

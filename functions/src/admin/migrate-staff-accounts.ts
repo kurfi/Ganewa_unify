@@ -77,9 +77,8 @@ export async function migrateStaffAccounts(options: MigrationOptions = {}) {
                 }
             }
 
-            let firebaseUser;
             try {
-                firebaseUser = await auth.getUser(uid);
+                await auth.getUser(uid);
                 console.log(`[StaffMigration] Firebase Auth user already exists for UID: ${uid}`);
             } catch (err: any) {
                 if (err.code === 'auth/user-not-found') {
@@ -88,7 +87,7 @@ export async function migrateStaffAccounts(options: MigrationOptions = {}) {
                             ? userData.password
                             : `GanewaStaff#${crypto.randomBytes(3).toString('hex')}!`;
 
-                        firebaseUser = await auth.createUser({
+                        await auth.createUser({
                             uid: uid,
                             email: email,
                             displayName: userData.name || username,
