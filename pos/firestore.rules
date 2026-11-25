@@ -38,6 +38,27 @@ service cloud.firestore {
         && request.auth.token.role == 'SUPER_ADMIN';
     }
 
+    function isValidSaleDecrement(productId) {
+      return ('lastSaleId' in request.resource.data)
+        && (request.resource.data.lastSaleId is string)
+        && (!('lastSaleId' in resource.data) || request.resource.data.lastSaleId != resource.data.lastSaleId)
+        && existsAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
+        && ('itemQuantities' in getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data)
+        && (productId in getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.itemQuantities)
+        && ('quantity' in resource.data)
+        && ('quantity' in request.resource.data)
+        && (resource.data.quantity is number)
+        && (request.resource.data.quantity is number)
+        && request.resource.data.quantity < resource.data.quantity
+        && (resource.data.quantity - request.resource.data.quantity) == getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.itemQuantities[productId];
+    }
+
+    function isValidAuditAdjustment() {
+      return ('auditLogId' in request.resource.data)
+        && (request.resource.data.auditLogId is string)
+        && existsAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId));
+    }
+
     // -------------------------------------------------------------
     // Products:
     // - Publicly readable for storefront catalog.
@@ -57,25 +78,8 @@ service cloud.firestore {
           isStaff()
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sellPrice', 'costPrice', 'buyPrice', 'name', 'barcode', 'category', 'department', 'wholesalePrice'])
           && (
-            // (a) Part of a checkout transaction linked to a sale document created in the same commit
-            // Validates that the sale exists in the same transaction and that the decrement matches the sold quantity
-            (
-              ('lastSaleId' in request.resource.data)
-              && existsAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
-              && (
-                getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.items.hasAny([
-                  {'productId': productId, 'quantity': resource.data.quantity - request.resource.data.quantity}
-                ])
-                || getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.items.hasAny([
-                  {'id': productId, 'quantity': resource.data.quantity - request.resource.data.quantity}
-                ])
-              )
-            )
-            // (b) Manual stock count adjustment requiring a deterministic audit record in auditLogs
-            || (
-              ('auditLogId' in request.resource.data)
-              && existsAfter(/databases/$(database)/documents/auditLogs/$(request.resource.data.auditLogId))
-            )
+            isValidSaleDecrement(productId)
+            || isValidAuditAdjustment()
           )
         )
       );
@@ -87,6 +91,12 @@ service cloud.firestore {
         allow read: if isStaff();
         allow write: if isAdmin();
       }
+    }
+
+    // Collection-group rule for privateData (required by rules_version = '2' for collectionGroup(db, 'privateData'))
+    match /{path=**}/privateData/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
     }
 
     // -------------------------------------------------------------

@@ -8,11 +8,29 @@ export interface ProductFinancials {
     supplierName?: string | null;
 }
 
+// Session-level memory cache for product financials
+let sessionFinancialsCache: Map<string, ProductFinancials> | null = null;
+let lastCacheTimestamp = 0;
+const SESSION_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour session TTL (invalidation on intake/update)
+
+/**
+ * Invalidate the session financials cache (e.g., after purchase intake or price updates)
+ */
+export function invalidateFinancialsCache() {
+    sessionFinancialsCache = null;
+    lastCacheTimestamp = 0;
+}
+
 /**
  * Efficiently loads financials for all products using a single collectionGroup query.
+ * Cached in-memory for the session to prevent 3,000 reads on every screen open.
  * Returns a map of productId -> ProductFinancials.
  */
-export async function fetchAllProductFinancials(): Promise<Map<string, ProductFinancials>> {
+export async function fetchAllProductFinancials(forceRefresh = false): Promise<Map<string, ProductFinancials>> {
+    if (!forceRefresh && sessionFinancialsCache && (Date.now() - lastCacheTimestamp < SESSION_CACHE_TTL_MS)) {
+        return sessionFinancialsCache;
+    }
+
     const financialsMap = new Map<string, ProductFinancials>();
     try {
         const snap = await getDocs(collectionGroup(db, 'privateData'));
@@ -30,6 +48,8 @@ export async function fetchAllProductFinancials(): Promise<Map<string, ProductFi
                 }
             }
         });
+        sessionFinancialsCache = financialsMap;
+        lastCacheTimestamp = Date.now();
     } catch (err) {
         console.warn('[fetchAllProductFinancials] Failed to load collectionGroup privateData:', err);
     }

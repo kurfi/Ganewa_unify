@@ -305,6 +305,11 @@ export function usePOS({
                 }
 
                 // 4. Create Sale document
+                const itemQuantities: Record<string, number> = {};
+                for (const item of finalItems) {
+                    itemQuantities[item.productId] = (itemQuantities[item.productId] || 0) + item.quantity;
+                }
+
                 const saleData: any = {
                     id: saleId,
                     customerName: selectedCustomer?.name || 'Walk-in',
@@ -317,6 +322,7 @@ export function usePOS({
                     paymentMethod: (debtAmount > 0 && actualPaid > 0) ? PaymentMethod.MULTIPAY : method,
                     status: SaleStatus.COMPLETED,
                     items: finalItems,
+                    itemQuantities,
                     invoiceNo: formattedInvoiceNo,
                     cashier: currentUser?.username || 'Unknown',
                     created_at: nowIso,

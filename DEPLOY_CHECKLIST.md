@@ -116,7 +116,20 @@ firebase deploy --only hosting:ganewamall-shop --project ganewa-provision-pos
    - Verify the order is created via `createOrder` Cloud Function with server-calculated price, delivery fee, and stock reduction.
    - Check that direct client writes to `/orders` are blocked with `PERMISSION_DENIED`.
 
-### Step 9: Scrub Plaintext Passwords (Post-Verification Only)
+### Step 9: Cost-Field Migration (`privateData/financials`) — Strict Release Order
+Do **not** run the cost-field migration before the new POS build is live on all tills:
+1. Confirm the new POS build (which reads `products/{id}/privateData/financials` and falls back to root `buyPrice`/`costPrice`/`supplierId`/`supplierName` if absent) is deployed to all tills (Step 7).
+2. Create the marker document `settings/costFieldsMigration` with `{ codeSwitched: true }` in Firestore (the migration script refuses to run without this marker).
+3. Preview the migration:
+   ```bash
+   npx tsx functions/src/admin/migrate-product-cost-fields.ts --dry-run
+   ```
+4. Execute the migration:
+   ```bash
+   npx tsx functions/src/admin/migrate-product-cost-fields.ts --force
+   ```
+
+### Step 10: Scrub Plaintext Passwords (Post-Verification Only)
 Only after every staff member has logged in successfully and verified access:
 ```bash
 # 1. Take a fresh Firestore export
