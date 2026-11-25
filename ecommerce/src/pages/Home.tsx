@@ -42,7 +42,7 @@ export default function Home() {
     const [allProducts, setAllProducts] = useState<Product[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeCategoryId, setActiveCategoryId] = useState('All');
+    const [activeCategory, setActiveCategory] = useState('All');
     const [loading, setLoading] = useState(true);
     const [visibleCount, setVisibleCount] = useState(24);
     const { totalItems } = useCart();
