@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Users, Plus, X, Edit, Trash2 } from 'lucide-react';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { usersRepo } from '../../repositories';
 import { useCollection, logAudit } from '../../firebase/firestoreHelpers';
 import { User, UserRole } from '../../types';
@@ -65,8 +66,8 @@ export function UserManagement() {
             return;
         }
 
-        if (password.length < 4) {
-            setAddUserForm(prev => ({ ...prev, error: 'Password must be at least 4 characters.' }));
+        if (password.length < 8) {
+            setAddUserForm(prev => ({ ...prev, error: 'Password must be at least 8 characters.' }));
             return;
         }
 
@@ -83,25 +84,25 @@ export function UserManagement() {
 
         setIsAddingUser(true);
         try {
-            const newUser: Omit<User, 'id' | 'deleted' | 'created_at' | 'updated_at'> = {
+            const functions = getFunctions(undefined, 'us-central1');
+            const createStaffUserFn = httpsCallable(functions, 'createStaffUser');
+            await createStaffUserFn({
                 username: username.trim(),
                 password,
-                role,
-            };
+                role
+            });
 
-            await usersRepo.create(newUser);
-            
             await logAudit(
                 'USER_CREATED',
-                `User ${username} created with role ${role}`,
+                `User ${username.trim()} created with role ${role}`,
                 currentUser?.username || 'System'
             );
 
-            showToast("User created successfully!", 'success');
+            showToast("Staff user created! They must change their password on first login.", 'success');
             setIsAddUserModalOpen(false);
         } catch (error: any) {
             console.error("Failed to add user:", error);
-            setAddUserForm(prev => ({ ...prev, error: 'Failed to add user.' }));
+            setAddUserForm(prev => ({ ...prev, error: error?.message || 'Failed to add user.' }));
         } finally {
             setIsAddingUser(false);
         }
@@ -113,8 +114,8 @@ export function UserManagement() {
 
         const { id, role, password, confirmPassword } = editUserForm;
 
-        if (password && password.length < 4) {
-            setEditUserForm(prev => ({ ...prev, error: 'Password must be at least 4 characters.' }));
+        if (password && password.length < 8) {
+            setEditUserForm(prev => ({ ...prev, error: 'Password must be at least 8 characters.' }));
             return;
         }
 
@@ -125,16 +126,18 @@ export function UserManagement() {
 
         setIsEditingUserSubmitting(true);
         try {
-            const updates: Partial<User> = { 
-                role,
-            };
-            
-            if (password) {
-                updates.password = password;
+            const functions = getFunctions(undefined, 'us-central1');
+
+            if (editingUser && role !== editingUser.role) {
+                const setUserRoleFn = httpsCallable(functions, 'setUserRole');
+                await setUserRoleFn({ targetUid: id, role });
             }
-            
-            await usersRepo.update(id, updates);
-            
+
+            if (password) {
+                const setStaffPasswordFn = httpsCallable(functions, 'setStaffPassword');
+                await setStaffPasswordFn({ targetUid: id, newPassword: password, requirePasswordChange: true });
+            }
+
             await logAudit(
                 'USER_UPDATED',
                 `User ${editingUser?.username} updated`,
@@ -142,11 +145,11 @@ export function UserManagement() {
             );
 
             setIsEditUserModalOpen(false);
-            showToast("User updated successfully.", 'success');
-        } catch (error) {
+            showToast(password ? "User updated. Temporary password set (must change on next login)." : "User updated successfully.", 'success');
+        } catch (error: any) {
             console.error("Failed to update user:", error);
-            setEditUserForm(prev => ({ ...prev, error: 'Failed to update user.' }));
-            showToast("Failed to update user.", 'error');
+            setEditUserForm(prev => ({ ...prev, error: error?.message || 'Failed to update user.' }));
+            showToast(error?.message || "Failed to update user.", 'error');
         } finally {
             setIsEditingUserSubmitting(false);
         }
@@ -181,14 +184,20 @@ export function UserManagement() {
                         <Users className="w-4 h-4 md:w-5 md:h-5 text-slate-500" />
                         User Management
                     </h2>
-                    <p className="text-slate-500 text-xs md:text-sm">Manage user accounts.</p>
+                    <p className="text-slate-500 text-xs md:text-sm">
+                        {currentUser?.role === UserRole.SUPER_ADMIN
+                            ? 'Manage staff accounts, roles, and password resets.'
+                            : 'View staff accounts. Only a Super Admin can add users, change roles, or reset passwords.'}
+                    </p>
                 </div>
-                <button
-                    onClick={handleOpenAddModal}
-                    className="w-full md:w-auto bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 flex items-center justify-center gap-2 shadow-sm text-xs md:text-sm font-medium"
-                >
-                    <Plus className="w-4 h-4" /> Add User
-                </button>
+                {currentUser?.role === UserRole.SUPER_ADMIN && (
+                    <button
+                        onClick={handleOpenAddModal}
+                        className="w-full md:w-auto bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 flex items-center justify-center gap-2 shadow-sm text-xs md:text-sm font-medium"
+                    >
+                        <Plus className="w-4 h-4" /> Add User
+                    </button>
+                )}
             </div>
 
             {/* User Management Desktop View */}

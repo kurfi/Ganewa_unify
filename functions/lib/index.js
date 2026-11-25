@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createOrder = exports.blockStaffDomainSelfSignup = exports.setStaffPassword = exports.completePasswordChange = exports.setUserRole = exports.syncUserCreditInfo = exports.syncShopUserCreditOnLink = exports.syncCustomerCreditOnWritten = exports.searchCustomerSalesPOS = exports.getCustomerSalesHistory = exports.handleBudgetAlert = exports.onProductChange = exports.reconcileCustomerDebt = exports.cleanupAuditLogs = exports.onProductStockChange = exports.recalculateRunningBalance = exports.generateReport = exports.rollupDailyStats = exports.getNextInvoiceNumber = void 0;
+exports.createOrder = exports.blockStaffDomainSelfSignup = exports.createStaffUser = exports.setStaffPassword = exports.completePasswordChange = exports.setUserRole = exports.syncUserCreditInfo = exports.syncShopUserCreditOnLink = exports.syncCustomerCreditOnWritten = exports.searchCustomerSalesPOS = exports.getCustomerSalesHistory = exports.handleBudgetAlert = exports.onProductChange = exports.reconcileCustomerDebt = exports.cleanupAuditLogs = exports.onProductStockChange = exports.recalculateRunningBalance = exports.generateReport = exports.rollupDailyStats = exports.getNextInvoiceNumber = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const pubsub_1 = require("firebase-functions/v2/pubsub");
 const https_1 = require("firebase-functions/v2/https");
@@ -951,6 +951,74 @@ exports.setStaffPassword = (0, https_1.onCall)({ region: 'us-central1', cors: tr
     }, { merge: true });
     console.log(`[setStaffPassword] SUPER_ADMIN ${request.auth.uid} reset password for staff ${trimmedUid} (mustChangePassword=${mustChange})`);
     return { success: true, targetUid: trimmedUid, mustChangePassword: mustChange };
+});
+// ─────────────────────────────────────────────────────────────
+//  SUPER_ADMIN-only: Create a new staff user in Firebase Auth + Firestore
+// ─────────────────────────────────────────────────────────────
+exports.createStaffUser = (0, https_1.onCall)({ region: 'us-central1', cors: true }, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'Must be signed in to create a staff account.');
+    }
+    if (request.auth.token.role !== 'SUPER_ADMIN') {
+        throw new https_1.HttpsError('permission-denied', 'Only a verified SUPER_ADMIN can create staff accounts.');
+    }
+    const { username, password, role } = (request.data || {});
+    const rawUsername = (username || '').trim();
+    const normalizedUsername = rawUsername.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+    if (!normalizedUsername || normalizedUsername.length < 2) {
+        throw new https_1.HttpsError('invalid-argument', 'Username must be at least 2 characters (letters, numbers, ., _, -).');
+    }
+    if (!password || typeof password !== 'string' || password.length < 8) {
+        throw new https_1.HttpsError('invalid-argument', 'Password must be at least 8 characters long.');
+    }
+    const validStaffRoles = ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
+    if (!role || !validStaffRoles.includes(role)) {
+        throw new https_1.HttpsError('invalid-argument', `Invalid staff role: ${role}`);
+    }
+    const email = `${normalizedUsername}${staffAuth_1.STAFF_EMAIL_SUFFIX}`;
+    const authAdmin = (0, auth_1.getAuth)();
+    try {
+        await authAdmin.getUserByEmail(email);
+        throw new https_1.HttpsError('already-exists', `A staff account for username "${normalizedUsername}" already exists.`);
+    }
+    catch (err) {
+        if (err instanceof https_1.HttpsError)
+            throw err;
+        if ((err === null || err === void 0 ? void 0 : err.code) !== 'auth/user-not-found') {
+            throw err;
+        }
+    }
+    const userRecord = await authAdmin.createUser({
+        email,
+        password,
+        displayName: rawUsername
+    });
+    await authAdmin.setCustomUserClaims(userRecord.uid, {
+        role,
+        mustChangePassword: true
+    });
+    const nowIso = new Date().toISOString();
+    await db.collection('users').doc(userRecord.uid).set({
+        id: userRecord.uid,
+        username: rawUsername,
+        email,
+        role,
+        active: true,
+        mustChangePassword: true,
+        deleted: false,
+        created_at: nowIso,
+        updated_at: nowIso,
+        createdBy: request.auth.uid
+    });
+    console.log(`[createStaffUser] SUPER_ADMIN ${request.auth.uid} created staff ${rawUsername} (${userRecord.uid}, role=${role})`);
+    return {
+        success: true,
+        uid: userRecord.uid,
+        username: rawUsername,
+        email,
+        role,
+        mustChangePassword: true
+    };
 });
 exports.blockStaffDomainSelfSignup = (0, identity_1.beforeUserCreated)(async (event) => {
     var _a;

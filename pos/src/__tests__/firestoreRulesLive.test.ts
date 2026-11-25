@@ -562,6 +562,18 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
         expect(newLogin.status).toBe(200);
         const payload = JSON.parse(Buffer.from(newLogin.body.idToken.split('.')[1], 'base64url').toString('utf8'));
         expect(payload.mustChangePassword).toBe(true);
+
+        // 3. createStaffUser: ADMIN rejected, SUPER_ADMIN succeeds & new staff can sign in
+        const createByAdmin = await callFn('createStaffUser', { username: 'new_cashier_ui', password: 'StaffTemp99!', role: 'CASHIER' }, adminSignIn.body.idToken);
+        expect(createByAdmin.status).toBe(403);
+
+        const createBySuper = await callFn('createStaffUser', { username: 'new_cashier_ui', password: 'StaffTemp99!', role: 'CASHIER' }, superSignIn.body.idToken);
+        expect(createBySuper.status).toBe(200);
+        expect(createBySuper.body.result.email).toBe(`new_cashier_ui${STAFF_EMAIL_SUFFIX}`);
+        expect(createBySuper.body.result.role).toBe('CASHIER');
+
+        const createdStaffLogin = await signIn(`new_cashier_ui${STAFF_EMAIL_SUFFIX}`, 'StaffTemp99!');
+        expect(createdStaffLogin.status).toBe(200);
     }, 30000);
 
     it('STAFF DOMAIN BLOCKER & MIGRATION REFUSAL: real Auth + Functions + Firestore emulator checks', async () => {

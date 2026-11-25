@@ -1241,6 +1241,103 @@ export const setStaffPassword = onCall(
     }
 );
 
+// ─────────────────────────────────────────────────────────────
+//  SUPER_ADMIN-only: Create a new staff user in Firebase Auth + Firestore
+// ─────────────────────────────────────────────────────────────
+export const createStaffUser = onCall(
+    { region: 'us-central1', cors: true },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError('unauthenticated', 'Must be signed in to create a staff account.');
+        }
+
+        if (request.auth.token.role !== 'SUPER_ADMIN') {
+            throw new HttpsError(
+                'permission-denied',
+                'Only a verified SUPER_ADMIN can create staff accounts.'
+            );
+        }
+
+        const { username, password, role } = (request.data || {}) as {
+            username?: string;
+            password?: string;
+            role?: 'SUPER_ADMIN' | 'ADMIN' | 'CASHIER';
+        };
+
+        const rawUsername = (username || '').trim();
+        const normalizedUsername = rawUsername.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        if (!normalizedUsername || normalizedUsername.length < 2) {
+            throw new HttpsError(
+                'invalid-argument',
+                'Username must be at least 2 characters (letters, numbers, ., _, -).'
+            );
+        }
+
+        if (!password || typeof password !== 'string' || password.length < 8) {
+            throw new HttpsError(
+                'invalid-argument',
+                'Password must be at least 8 characters long.'
+            );
+        }
+
+        const validStaffRoles = ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
+        if (!role || !validStaffRoles.includes(role)) {
+            throw new HttpsError('invalid-argument', `Invalid staff role: ${role}`);
+        }
+
+        const email = `${normalizedUsername}${STAFF_EMAIL_SUFFIX}`;
+        const authAdmin = getAuth();
+
+        try {
+            await authAdmin.getUserByEmail(email);
+            throw new HttpsError(
+                'already-exists',
+                `A staff account for username "${normalizedUsername}" already exists.`
+            );
+        } catch (err: any) {
+            if (err instanceof HttpsError) throw err;
+            if (err?.code !== 'auth/user-not-found') {
+                throw err;
+            }
+        }
+
+        const userRecord = await authAdmin.createUser({
+            email,
+            password,
+            displayName: rawUsername
+        });
+
+        await authAdmin.setCustomUserClaims(userRecord.uid, {
+            role,
+            mustChangePassword: true
+        });
+
+        const nowIso = new Date().toISOString();
+        await db.collection('users').doc(userRecord.uid).set({
+            id: userRecord.uid,
+            username: rawUsername,
+            email,
+            role,
+            active: true,
+            mustChangePassword: true,
+            deleted: false,
+            created_at: nowIso,
+            updated_at: nowIso,
+            createdBy: request.auth.uid
+        });
+
+        console.log(`[createStaffUser] SUPER_ADMIN ${request.auth.uid} created staff ${rawUsername} (${userRecord.uid}, role=${role})`);
+        return {
+            success: true,
+            uid: userRecord.uid,
+            username: rawUsername,
+            email,
+            role,
+            mustChangePassword: true
+        };
+    }
+);
+
 export const blockStaffDomainSelfSignup = beforeUserCreated(async (event) => {
     const user = event.data;
     const email = user?.email?.toLowerCase() || '';

@@ -11,7 +11,7 @@ This document is the direct-to-production release runbook for the hardened Ganew
 **Deployment must NOT proceed until every unticked box below is completed and ticked:**
 
 - [ ] **Recover the store Gmail account** (`ganewashoppingmallkurfi@gmail.com`) and **enable 2-Step Verification** (and rotate the legacy `GanewaStore***` password found in pre-hardening git history).
-- [ ] **Rotate or delete the shared Firebase Auth user** for the store account (`ganewashoppingmallkurfi@gmail.com`) at closing time, **after** per-staff logins are confirmed working.
+- [ ] **Rotate the password of the store Firebase Auth user** (`ganewashoppingmallkurfi@gmail.com`) and map it to `ADMIN` (done via Step 4 below, so the admin can log in immediately after go-live).
 - [ ] **Restrict the Firebase Web API key** in Google Cloud Console → APIs & Credentials (HTTP referrers):
   - `https://ganewa-provision-pos.web.app/*`
   - `https://ganewa-provision-pos.firebaseapp.com/*`
@@ -75,14 +75,21 @@ firebase deploy --only functions --project ganewa-provision-pos
 cd ..
 ```
 
-### Step 4: Bootstrap Super Admin Accounts
-Create at least **two** `SUPER_ADMIN` accounts (pass a username or full email; usernames automatically get `@staff.ganewa.invalid`):
+### Step 4: Bootstrap Super Admin & Store Admin Accounts
+Bootstrap `kurficbt1@gmail.com` as `SUPER_ADMIN` (plus a recommended backup `SUPER_ADMIN`), and map `ganewashoppingmallkurfi@gmail.com` to `ADMIN` with a rotated password so the admin can log in immediately after go-live:
 ```bash
 cd functions
-npx tsx src/admin/bootstrap-super-admin.ts primary_superadmin "StrongTempPass1!"
-npx tsx src/admin/bootstrap-super-admin.ts backup_superadmin "StrongTempPass2!"
+# 1. Primary Super Admin
+npx tsx src/admin/bootstrap-super-admin.ts kurficbt1@gmail.com "StrongSuperPass1!" SUPER_ADMIN
+
+# 2. Recommended backup Super Admin
+npx tsx src/admin/bootstrap-super-admin.ts backup_superadmin "StrongSuperPass2!" SUPER_ADMIN
+
+# 3. Store Admin (rotates leaked password + assigns ADMIN custom claim + Firestore profile)
+npx tsx src/admin/bootstrap-super-admin.ts ganewashoppingmallkurfi@gmail.com "NewStrongAdminPass1!" ADMIN
 cd ..
 ```
+*(All other staff accounts, roles, and password resets can be managed in POS **Settings → User Management** by a `SUPER_ADMIN`.)*
 
 ### Step 5: Run Staff Migration (Dry-Run First) & Confirm Sign-Ins
 ```bash
