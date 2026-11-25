@@ -1,162 +1,108 @@
 # Production Deployment & Hardening Release Checklist
 
-This document details the exact, step-by-step procedure for releasing the hardened Ganewa Shopping Mall applications (`pos` and `ecommerce`) and rolling out the unified product categories to production.
+This document is the direct-to-production release runbook for the hardened Ganewa Shopping Mall applications (`pos`, `ecommerce`, and `functions`) with unified product categories.
+
+**Release Window**: Must happen **after closing time** when no tills are actively ringing up sales.
 
 ---
 
-## 1. Secrets That MUST Be Rotated Immediately
+## 1. Before Go-Live (Mandatory Pre-Flight)
 
-The following credentials appeared in git commit history or environment scripts prior to the `hardening/cleanup` branch and **must be rotated**:
+**Deployment must NOT proceed until every unticked box below is completed and ticked:**
 
-1. **Store Master Password**:
-   - The legacy store password (`GanewaStore***` found in old commits) was committed to git in multiple scripts and fallback configurations. Change the password of `ganewashoppingmallkurfi@gmail.com` in Google / Firebase Auth console.
-2. **Decommission Store Account**:
-   - Once the first `SUPER_ADMIN` is bootstrapped, permanently disable or delete the shared store account (`ganewashoppingmallkurfi@gmail.com`) so all actions are tied to individual staff accounts with audit trails.
-3. **Firebase Web API Keys**:
-   - In Google Cloud Console -> APIs & Credentials, restrict your Firebase API keys by HTTP referrers:
-     - `https://ganewa-provision-pos.web.app/*`
-     - `https://ganewa-provision-pos.firebaseapp.com/*`
-     - `https://ganewamall-shop.web.app/*`
-     - `https://ganewamall-shop.firebaseapp.com/*`
+- [ ] **Recover the store Gmail account** (`ganewashoppingmallkurfi@gmail.com`) and **enable 2-Step Verification** (and rotate the legacy `GanewaStore***` password found in pre-hardening git history).
+- [ ] **Rotate or delete the shared Firebase Auth user** for the store account (`ganewashoppingmallkurfi@gmail.com`) at closing time, **after** per-staff logins are confirmed working.
+- [ ] **Restrict the Firebase Web API key** in Google Cloud Console → APIs & Credentials (HTTP referrers):
+  - `https://ganewa-provision-pos.web.app/*`
+  - `https://ganewa-provision-pos.firebaseapp.com/*`
+  - `https://ganewamall-shop.web.app/*`
+  - `https://ganewamall-shop.firebaseapp.com/*`
+- [ ] **Tighten the Cloudinary upload preset** (restrict allowed formats, max file size, and folder/unsigned upload scope).
+- [ ] **Set a Google Cloud budget alert** on the `ganewa-provision-pos` billing account.
+- [ ] **Run the legacy IndexedDB diagnostic** on every till to ensure no unsynced local data is stranded before cutover.
+- [x] **Stock deliveries & write-offs policy (confirmed by owner)**: Only `ADMIN` and `SUPER_ADMIN` may receive stock (purchases) and perform stock write-offs. Cashiers cannot.
+- [x] **Offline policy (confirmed by owner)**: When the internet drops, cashiers write the sale on paper and enter it into the POS afterwards.
 
 ---
 
-## 2. Release & Execution Sequence
+## 2. Owner-Confirmed Operational Policies
 
-Execute strictly in the following sequential order:
+### 2.1 Staff Logins & Forgotten Passwords
+- **Username-only login**: Staff sign in with their username and password only. Internally, the POS maps `<username>` to `<username>@staff.ganewa.invalid` using the single shared constant `STAFF_EMAIL_SUFFIX` (`functions/src/constants/staffAuth.ts`). No staff email domain needs to be bought or owned.
+- **Self-registration blocker**: `blockStaffDomainSelfSignup` (`beforeUserCreated`) rejects any public sign-up using `@staff.ganewa.invalid` or the store Gmail address.
+  - **Identity Platform required**: `beforeUserCreated` blocking functions require Firebase Authentication with **Identity Platform** enabled. In Firebase Console → **Authentication** → **Settings** (or **Upgrade to Firebase Authentication with Identity Platform**), enable Identity Platform before deploying functions.
+- **Forgotten staff passwords**: Because `@staff.ganewa.invalid` cannot receive emails, self-service password reset links do not work for staff.
+  - When a staff member forgets their password, a `SUPER_ADMIN` calls the `setStaffPassword` Cloud Function (`{ targetUid, newPassword }`), which sets a new temporary password, revokes existing sessions, and enforces `mustChangePassword: true` so the staff member must choose a new personal password on next sign-in.
+  - **Recommendation**: Always maintain **at least two `SUPER_ADMIN` accounts** so the store is never locked out if one super admin is unavailable or forgets their password.
 
-```
-[1. Backup Firestore] ➡️ [2. Staging Rehearsal] ➡️ [3. Deploy Cloud Functions]
-         ⬇️
-[4. Bootstrap 1st Super Admin] ➡️ [5. Staff Account Migration] ➡️ [6. Deploy Canonical Rules]
-         ⬇️
-[7. Category Rollout & Migration] ➡️ [8. Deploy PWAs (POS & Shop)] ➡️ [9. Smoke Tests & Verification]
-         ⬇️
-[10. Scrub Plaintext Passwords]
-```
+### 2.2 Offline Policy (Plain-Language Staff Instruction)
+> **What to do if the internet goes down:**
+> 1. Do **not** ring up the sale on the till while offline.
+> 2. Write the sale on a paper receipt book: **date and time**, **item names and quantities**, **unit prices and total**, **payment method (Cash / Transfer / POS)**, and the **paper receipt number**.
+> 3. Give the customer their paper receipt.
+> 4. As soon as the internet comes back, enter each paper sale into the POS right away so stock and daily totals stay accurate.
 
-### Step 1: Backup Production Firestore
-Run a manual export of your Firestore database before touching rules or deploying code:
+---
+
+## 3. Direct-to-Production Release Procedure (After Closing Time)
+
+Execute strictly in this order. **If any step fails, stop and run Section 4 (Rollback) immediately.**
+
+### Step 1: Export Production Firestore to a Bucket
 ```bash
-gcloud firestore export gs://<your-backup-bucket>/pre-hardening-backup-$(date +%Y%m%d) --project=ganewa-provision-pos
+gcloud firestore export gs://<your-backup-bucket>/pre-hardening-backup-$(date +%Y%m%d-%H%M) --project=ganewa-provision-pos
 ```
 
-### Step 2: Staging Rehearsal with Copied Data
-Before running on production:
-1. Export production data to a test bucket.
-2. Import data into a staging Firebase project (e.g. `ganewa-staging`).
-3. Run `migrate-staff-accounts.ts --dry-run` and verify created users in the staging Auth console.
-4. Verify rules enforcement and order placement in the staging environment.
+### Step 2: Save Current Live Rules & Note Current Hosting Releases
+Save a local copy of the currently deployed rules and record the active Hosting version/release IDs for both sites before deploying anything:
+```bash
+# 1. Save current live Firestore rules
+firebase firestore:rules:get --project ganewa-provision-pos > live-firestore.rules.bak
+
+# 2. Note the current live Hosting release/version ID for each site (write these down)
+firebase hosting:channel:list --site ganewa-provision-pos --project ganewa-provision-pos
+firebase hosting:releases:list --site ganewa-provision-pos --project ganewa-provision-pos
+firebase hosting:releases:list --site ganewamall-shop --project ganewa-provision-pos
+```
 
 ### Step 3: Deploy Cloud Functions
-Deploy the newly hardened functions (`createOrder`, `setUserRole`, `getNextInvoiceNumber`, `completePasswordChange`, `blockStaffDomainSelfSignup`):
-
-> **Verification Notice**:
-> - Real rules & concurrency tests are executed and verified on the Firestore Emulator (`pos/src/__tests__/firestoreRulesLive.test.ts`).
-> - The functions `setUserRole` and `blockStaffDomainSelfSignup` tests run against local mock logic and are marked **[NOT VERIFIED ON FULL EMULATOR]** because the Cloud Functions and Auth emulators require building functions (`tsc`), which was explicitly prohibited during this pass. They must be verified during Step 2 (Staging Rehearsal).
+Ensure Identity Platform is enabled (see Section 2.1), then build and deploy functions:
 ```bash
 cd functions
 npm install
 npm run build
 firebase deploy --only functions --project ganewa-provision-pos
+cd ..
 ```
 
-### Step 4: Bootstrap Primary Super Admin & Rotate Store Account
-Run the one-time bootstrap script you run yourself to create the first `SUPER_ADMIN`:
+### Step 4: Bootstrap Super Admin Accounts
+Create at least **two** `SUPER_ADMIN` accounts (pass a username or full email; usernames automatically get `@staff.ganewa.invalid`):
 ```bash
 cd functions
-npx tsx src/admin/bootstrap-super-admin.ts \
-  --email="your-actual-superadmin@domain.com" \
-  --password="AStrongTemporaryPassword123!" \
-  --username="PrimaryAdmin"
+npx tsx src/admin/bootstrap-super-admin.ts primary_superadmin "StrongTempPass1!"
+npx tsx src/admin/bootstrap-super-admin.ts backup_superadmin "StrongTempPass2!"
+cd ..
 ```
 
-### Step 5: Migrate Staff Accounts to Firebase Auth
-Run the idempotent staff account migration utility:
+### Step 5: Run Staff Migration (Dry-Run First) & Confirm Sign-Ins
 ```bash
-# Dry run first to verify mapping
+cd functions
+# 1. Dry-run first to verify username -> @staff.ganewa.invalid mapping
 npx tsx src/admin/migrate-staff-accounts.ts --dry-run
 
-# Run migration
+# 2. Run migration
 npx tsx src/admin/migrate-staff-accounts.ts
+cd ..
 ```
+- **Gate before continuing**: Confirm sign-in works for **1× SUPER_ADMIN**, **1× ADMIN**, and **1× CASHIER** before deploying the locked-down Firestore rules in Step 6.
 
-### Step 6: Deploy Canonical Firestore Rules & Indexes
-Deploy `pos/firestore.rules` and `firestore.indexes.json`:
-- Contains custom-claims-based RBAC helpers (`isCashier()`, `isAdmin()`, `isSuperAdmin()`).
-- Contains `/categories/{categoryId}` rules (public reads only active categories, staff reads all, only admins write).
-- Retains `/departments/{docId}` read/write rules marked deprecated so legacy POS clients remain functional during cutover.
-- Contains composite indexes for `categories` (`active ASC, sortOrder ASC`).
-
+### Step 6: Deploy Firestore Rules & Indexes
 ```bash
 firebase deploy --only firestore:rules,firestore:indexes --project ganewa-provision-pos
 ```
 
----
-
-## 3. Unified Categories Rollout Section
-
-This section details the zero-downtime transition from legacy department/category strings to the shared `categories` collection and `categoryId` link.
-
-### Step 7a: Initialize Approved Standard Categories
-- Initialize the 14 approved standard categories in the shared `/categories` collection:
-  1. `Beverages (Drinks & Water)`
-  2. `Milk & Dairy Products`
-  3. `Hot Drinks (Tea, Coffee & Cocoa)`
-  4. `Grains, Noodles & Staples`
-  5. `Seasonings, Condiments & Oil`
-  6. `Snacks, Biscuits & Confectionery`
-  7. `Soap & Detergent`
-  8. `Personal Care (Hair, Skin & Oral)`
-  9. `Baby Products & Hygiene`
-  10. `Household & Insect Control`
-  11. `Eggs & Poultry`
-  12. `Baking Supplies`
-  13. `Stationery`
-  14. `Other / Miscellaneous`
-
-### Step 7b: Run Migration Dry-Run (POS Admin or CLI)
-- In POS Admin (`Settings -> Product Categories`) or via the emulator-only migration script:
-  - Run the dry run to inspect every distinct category string across all products.
-  - Verify approved mappings:
-    - `General` $\to$ `Other / Miscellaneous`
-    - `BISCUIT` $\to$ `Snacks, Biscuits & Confectionery`
-    - `FLOUR` $\to$ `Grains, Noodles & Staples`
-    - `VASELINE` $\to$ `Personal Care (Hair, Skin & Oral)`
-  - Confirm target mapping for any unmapped values (e.g. `STELLA`).
-  - Verify zero unmapped items are left unresolved.
-
-### Step 7c: Execute Product Category Migration
-- Ensure Firestore backup is taken first.
-- **Permission & Security Notice**: The restriction that only `SUPER_ADMIN` can run the category migration is enforced strictly in application code (`executeUnifiedCategoriesMigration`), not in Firestore security rules. This is because Firestore rules permit both `ADMIN` and `SUPER_ADMIN` to perform product writes, and rules cannot distinguish between the two for product catalog fields.
-- Execute `migrateUnifiedCategories(confirmed = true)`:
-  - Migrates products in batches of $\le 500$ writes.
-  - Sets `categoryId` (the source of truth) and normalizes display `category` name copy.
-  - Safe to re-run (idempotent; skips products that already have matching `categoryId` and `category`).
-
-### Step 8: Deploy PWAs (POS & E-commerce Storefront)
-Build and deploy both frontends:
-
-> **SEO Branch Integration & Firebase Hosting Redirect Limits**:
-> Because a Single Page Application (SPA) running in the browser cannot emit real HTTP 301 status headers, historical SEO redirects must be baked into Firebase Hosting at build/deploy time.
-> - **Firebase Hosting Redirect Limits**: Large `firebase.json` redirect arrays can impact deployment payload and CLI parsing — check the current Firebase Hosting limits before scaling beyond typical category counts. With 14-50 categories, typical old slug counts are small (< 100 entries).
-> - **Direct Redirect Guarantee (No Redirect Chains)**: In our data model, when a category is renamed multiple times, all previous historical slugs are stored in a flat array (`oldSlugs: string[]`). Build-time redirects map every historical slug directly to the CURRENT canonical slug (`/category/:oldSlug` $\to$ `/category/:canonicalSlug`), preventing multiple HTTP redirect hops.
-> - The build script queries active categories with non-empty `oldSlugs` and appends `redirects` entries into `firebase.json`:
-> ```json
-> {
->   "hosting": {
->     "redirects": [
->       {
->         "source": "/category/:oldSlug",
->         "destination": "/category/:canonicalSlug",
->         "type": 301
->       }
->     ]
->   }
-> }
-> ```
-> - At runtime within the SPA, `resolveCategoryBySlug(slug, categories)` performs client-side fallback navigation (`navigate('/category/' + category.slug, { replace: true })`) if a route is visited directly without hitting the hosting redirect.
-
+### Step 7: Deploy Hosting for POS & Storefront
+*(Includes unified categories; note that historical category SEO redirects are baked into `firebase.json` at build time for active categories with `oldSlugs`.)*
 ```bash
 # POS
 cd pos
@@ -167,65 +113,62 @@ firebase deploy --only hosting:ganewa-provision-pos --project ganewa-provision-p
 cd ../ecommerce
 npm run build
 firebase deploy --only hosting:ganewamall-shop --project ganewa-provision-pos
+cd ..
 ```
 
-### Step 9: Post-Deployment Smoke Tests & Verification
-1. **POS Tests**:
-   - Log in as cashier $\to$ verify unable to add/edit/delete categories in `Settings`.
-   - Log in as admin $\to$ create a category, edit slug, reorder, and toggle visibility.
-   - Verify category deletion is blocked if child subcategories or products still exist.
-   - Verify products can be created and edited using the dynamic category dropdown (`categoryId` set).
-2. **Storefront Tests**:
-   - Verify anonymous visitor sees only active categories.
-   - Verify clicking category filter filters products by `categoryId`.
-   - Verify changing category active/name in POS reflects in storefront without redeploy.
-   - Verify old slugs redirect cleanly via `oldSlugs` lookup.
-
-### Step 9: Cost-Field Migration (`privateData/financials`) — Strict Release Order
-Do **not** run the cost-field migration before the new POS build is live on all tills:
-1. Confirm the new POS build (which reads `products/{id}/privateData/financials` and falls back to root `buyPrice`/`costPrice`/`supplierId`/`supplierName` if absent) is deployed to all tills (Step 7).
-2. Create the marker document `settings/costFieldsMigration` with `{ codeSwitched: true }` in Firestore (the migration script refuses to run without this marker).
-3. Preview the migration:
-   ```bash
-   npx tsx functions/src/admin/migrate-product-cost-fields.ts --dry-run
-   ```
-4. Execute the migration:
-   ```bash
-   npx tsx functions/src/admin/migrate-product-cost-fields.ts --force
-   ```
-
-> **Security Note on `itemQuantities` Stock Rule**:
-> The checkout stock-decrement rule in `pos/firestore.rules` validates decrements against `sales/{lastSaleId}.data.itemQuantities[productId]`. Because `itemQuantities` is client-written by the POS in the same transaction as `items`, a malicious cashier could theoretically fake a quantity in `itemQuantities` (though any discrepancy between `items` and `itemQuantities` is permanently traceable in the `sales` record). Adding a server-side reconciling Cloud Function (`onDocumentCreated` on `sales/{saleId}` to verify `itemQuantities` matches `items` and flag/alert discrepancies) is recommended as a follow-up hardening step.
-
-### Step 10: Scrub Plaintext Passwords & Decommission Deprecated Rules (Post-Verification Only)
-Only after every staff member has logged in successfully and verified access:
-```bash
-# Preview scrub
-npx tsx src/admin/scrub-staff-passwords.ts --dry-run
-# Perform final scrub
-npx tsx src/admin/scrub-staff-passwords.ts --force
-```
-Remove deprecated `/departments` block from `pos/firestore.rules` after confirming zero traffic to departments.
+### Step 8: Post-Deployment Smoke Test
+Verify all of the following before opening the store:
+1. **Three sign-ins**: Sign in as `SUPER_ADMIN`, `ADMIN`, and `CASHIER` using username + password.
+2. **Cash sale + receipt + drawer**: Complete a cash sale as `CASHIER`, confirm receipt prints and cash drawer opens.
+3. **Return**: Process a test return and verify stock/refund behavior.
+4. **Web order**: Place a test order on the storefront (`ganewamall-shop`) and verify it appears in POS Orders.
+5. **Cost columns hidden**: Confirm `buyPrice` / `costPrice` / supplier columns are hidden from `CASHIER` in POS.
 
 ---
 
-## 4. Rollback Plan
+## 4. Immediate Rollback Commands
 
-If a critical issue occurs during release:
+If **any** step fails, roll back immediately:
 
-1. **Revert Rules**:
-   ```bash
-   git checkout HEAD~1 -- pos/firestore.rules
-   firebase deploy --only firestore:rules --project ganewa-provision-pos
-   ```
-2. **Revert Hosting**:
-   In Firebase Console -> Hosting -> View deployment history, click **Rollback** on the previous release.
-3. **Revert Functions**:
-   Deploy the previous function commit:
-   ```bash
-   firebase deploy --only functions --project ganewa-provision-pos
-   ```
-4. **Restore Database (Last Resort)**:
-   ```bash
-   gcloud firestore import gs://<your-backup-bucket>/pre-hardening-backup-<timestamp> --project=ganewa-provision-pos
-   ```
+### Rollback Firestore Rules
+```bash
+firebase deploy --only firestore:rules --project ganewa-provision-pos --config <(echo '{"firestore":{"rules":"live-firestore.rules.bak"}}')
+```
+*(Or copy `live-firestore.rules.bak` over `pos/firestore.rules` and run `firebase deploy --only firestore:rules --project ganewa-provision-pos`.)*
+
+### Rollback Hosting (POS & Storefront)
+Use the previous release/version noted in Step 2:
+```bash
+# Roll back POS to previous release
+firebase hosting:rollback ganewa-provision-pos --project ganewa-provision-pos
+
+# Roll back Storefront to previous release
+firebase hosting:rollback ganewamall-shop --project ganewa-provision-pos
+```
+*(Alternatively, in Firebase Console → Hosting → Release history, click **Rollback** on the noted release, or run `firebase hosting:clone <site>:<versionId> <site>:live --project ganewa-provision-pos`.)*
+
+### Rollback Functions (if needed)
+```bash
+git checkout <previous-known-good-commit> -- functions/
+cd functions && npm run build && firebase deploy --only functions --project ganewa-provision-pos
+```
+
+### Restore Firestore (Last Resort)
+```bash
+gcloud firestore import gs://<your-backup-bucket>/pre-hardening-backup-<timestamp> --project=ganewa-provision-pos
+```
+
+---
+
+## 5. Deferred Post-Release Tasks (NOT Part of Release Night)
+
+**Do NOT run these on release night.** Wait until the new release has run cleanly for **several days** in production:
+
+1. **Cost-Field Migration (`privateData/financials`)** — only after all tills have run the new POS build cleanly for several days:
+   - Create `settings/costFieldsMigration` with `{ codeSwitched: true }` in Firestore.
+   - Dry-run: `npx tsx functions/src/admin/migrate-product-cost-fields.ts --dry-run`
+   - Execute: `npx tsx functions/src/admin/migrate-product-cost-fields.ts --force`
+2. **Plaintext-Password Scrub & Legacy `/departments` Cleanup** — only after every staff member has signed in and changed any temporary password:
+   - Dry-run: `npx tsx functions/src/admin/scrub-staff-passwords.ts --dry-run`
+   - Execute: `npx tsx functions/src/admin/scrub-staff-passwords.ts --force`
+   - Remove deprecated `/departments` block from `pos/firestore.rules` after confirming zero traffic.
