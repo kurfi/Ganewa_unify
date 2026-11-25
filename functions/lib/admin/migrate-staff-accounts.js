@@ -73,6 +73,10 @@ async function migrateStaffAccounts(options = {}) {
     for (const docSnap of usersSnapshot.docs) {
         const userData = docSnap.data();
         const uid = docSnap.id;
+        if (userData.deleted === true) {
+            console.log(`[StaffMigration] Skipping soft-deleted user doc: ${uid} (${userData.username || 'unknown'})`);
+            continue;
+        }
         const username = userData.username || uid;
         const normalizedUsername = username.toLowerCase().replace(/[^a-z0-9._-]/g, '');
         const email = userData.email || `${normalizedUsername}@${domain}`;
