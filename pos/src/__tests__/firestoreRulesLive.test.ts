@@ -7,6 +7,8 @@ import {
 } from '@firebase/rules-unit-testing';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
+import { STAFF_EMAIL_SUFFIX } from '../../../functions/src/constants/staffAuth';
 
 let testEnv: RulesTestEnvironment;
 
@@ -458,72 +460,211 @@ describe('Live Concurrency Test on Firestore Emulator', () => {
         });
     });
 
-    it('SETUSERROLE: rejects non-SUPER_ADMIN callers [NOT VERIFIED - MOCK UNIT LOGIC ONLY]', async () => {
-        // Test role assignment logic matching setUserRole Cloud Function behavior
-        const attemptSetUserRole = (callerToken: { role?: string }, targetUid: string, newRole: string) => {
-            if (!callerToken || callerToken.role !== 'SUPER_ADMIN') {
-                throw new Error('Only a verified SUPER_ADMIN can assign or change user roles.');
+    it('SETUSERROLE & SETSTAFFPASSWORD: real Functions + Auth emulator RBAC verification', async () => {
+        const emuProject = process.env.GCLOUD_PROJECT || 'demo-ganewa';
+        const authAdminBase = `http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/projects/${emuProject}`;
+        const authClientBase = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1';
+        const fnBase = `http://127.0.0.1:5001/${emuProject}/us-central1`;
+
+        const createAdminAuthUser = async (localId: string, email: string, password: string, claims?: Record<string, any>) => {
+            // Delete first if left over from an earlier run
+            await fetch(`${authAdminBase}/accounts:delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+                body: JSON.stringify({ localId })
+            }).catch(() => {});
+
+            const createRes = await fetch(`${authAdminBase}/accounts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+                body: JSON.stringify({ localId, email, password })
+            });
+            expect(createRes.status).toBe(200);
+
+            if (claims) {
+                const claimRes = await fetch(`${authAdminBase}/accounts:update`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+                    body: JSON.stringify({ localId, customAttributes: JSON.stringify(claims) })
+                });
+                expect(claimRes.status).toBe(200);
             }
-            return { success: true, targetUid, newRole };
         };
 
-        // Cashier caller fails
-        expect(() => attemptSetUserRole({ role: 'CASHIER' }, 'u_test', 'ADMIN')).toThrow(
-            'Only a verified SUPER_ADMIN can assign or change user roles.'
-        );
+        const signIn = async (email: string, password: string) => {
+            const res = await fetch(`${authClientBase}/accounts:signInWithPassword?key=fake-api-key`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, returnSecureToken: true })
+            });
+            const body = await res.json();
+            return { status: res.status, body };
+        };
 
-        // Admin caller fails (only SUPER_ADMIN can call)
-        expect(() => attemptSetUserRole({ role: 'ADMIN' }, 'u_test', 'CASHIER')).toThrow(
-            'Only a verified SUPER_ADMIN can assign or change user roles.'
-        );
+        const callFn = async (name: string, data: any, idToken?: string) => {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (idToken) headers.Authorization = `Bearer ${idToken}`;
+            const res = await fetch(`${fnBase}/${name}`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ data })
+            });
+            const body = await res.json();
+            return { status: res.status, body };
+        };
 
-        // Unauthenticated or customer caller fails
-        expect(() => attemptSetUserRole({ role: 'USER' }, 'u_test', 'ADMIN')).toThrow(
-            'Only a verified SUPER_ADMIN can assign or change user roles.'
-        );
+        await createAdminAuthUser('emu_super', `super1${STAFF_EMAIL_SUFFIX}`, 'OldPass123!', { role: 'SUPER_ADMIN' });
+        await createAdminAuthUser('emu_admin', `admin1${STAFF_EMAIL_SUFFIX}`, 'OldPass123!', { role: 'ADMIN' });
+        await createAdminAuthUser('emu_cashier', `cashier_rbac${STAFF_EMAIL_SUFFIX}`, 'OldPass123!', { role: 'CASHIER' });
+        await createAdminAuthUser('emu_shopper', 'shopper_rbac@gmail.com', 'OldPass123!', { role: 'USER' });
 
-        // SUPER_ADMIN caller succeeds
-        expect(attemptSetUserRole({ role: 'SUPER_ADMIN' }, 'u_test', 'ADMIN')).toEqual({
-            success: true,
-            targetUid: 'u_test',
-            newRole: 'ADMIN'
+        const superSignIn = await signIn(`super1${STAFF_EMAIL_SUFFIX}`, 'OldPass123!');
+        const adminSignIn = await signIn(`admin1${STAFF_EMAIL_SUFFIX}`, 'OldPass123!');
+        const cashierSignIn = await signIn(`cashier_rbac${STAFF_EMAIL_SUFFIX}`, 'OldPass123!');
+        const shopperSignIn = await signIn('shopper_rbac@gmail.com', 'OldPass123!');
+
+        expect(superSignIn.status).toBe(200);
+
+        // 1. setUserRole: unauthenticated, CASHIER, ADMIN, USER must all be rejected
+        const unauthRes = await callFn('setUserRole', { targetUid: 'emu_cashier', role: 'ADMIN' });
+        expect(unauthRes.status).toBe(401);
+
+        const cashierRes = await callFn('setUserRole', { targetUid: 'emu_cashier', role: 'ADMIN' }, cashierSignIn.body.idToken);
+        expect(cashierRes.status).toBe(403);
+
+        const adminRes = await callFn('setUserRole', { targetUid: 'emu_cashier', role: 'ADMIN' }, adminSignIn.body.idToken);
+        expect(adminRes.status).toBe(403);
+
+        const shopperRes = await callFn('setUserRole', { targetUid: 'emu_cashier', role: 'ADMIN' }, shopperSignIn.body.idToken);
+        expect(shopperRes.status).toBe(403);
+
+        // SUPER_ADMIN succeeds
+        const superRes = await callFn('setUserRole', { targetUid: 'emu_cashier', role: 'ADMIN' }, superSignIn.body.idToken);
+        expect(superRes.status).toBe(200);
+        expect(superRes.body.result).toEqual({ success: true, targetUid: 'emu_cashier', role: 'ADMIN' });
+
+        // 2. setStaffPassword: CASHIER and ADMIN rejected; SUPER_ADMIN succeeds & sets mustChangePassword
+        const pwCashierRes = await callFn('setStaffPassword', { targetUid: 'emu_admin', newPassword: 'NewTempPass99!' }, cashierSignIn.body.idToken);
+        expect(pwCashierRes.status).toBe(403);
+
+        const pwAdminRes = await callFn('setStaffPassword', { targetUid: 'emu_cashier', newPassword: 'NewTempPass99!' }, adminSignIn.body.idToken);
+        expect(pwAdminRes.status).toBe(403);
+
+        const pwSuperRes = await callFn('setStaffPassword', { targetUid: 'emu_cashier', newPassword: 'NewTempPass99!' }, superSignIn.body.idToken);
+        expect(pwSuperRes.status).toBe(200);
+        expect(pwSuperRes.body.result).toEqual({ success: true, targetUid: 'emu_cashier', mustChangePassword: true });
+
+        // Old password fails, new password succeeds
+        const oldLogin = await signIn(`cashier_rbac${STAFF_EMAIL_SUFFIX}`, 'OldPass123!');
+        expect(oldLogin.status).toBe(400);
+
+        const newLogin = await signIn(`cashier_rbac${STAFF_EMAIL_SUFFIX}`, 'NewTempPass99!');
+        expect(newLogin.status).toBe(200);
+        const payload = JSON.parse(Buffer.from(newLogin.body.idToken.split('.')[1], 'base64url').toString('utf8'));
+        expect(payload.mustChangePassword).toBe(true);
+    }, 30000);
+
+    it('STAFF DOMAIN BLOCKER & MIGRATION REFUSAL: real Auth + Functions + Firestore emulator checks', async () => {
+        const emuProject = process.env.GCLOUD_PROJECT || 'demo-ganewa';
+        const authAdminBase = `http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/projects/${emuProject}`;
+        const authClientBase = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1';
+
+        const publicSignUp = async (email: string, password: string) => {
+            const res = await fetch(`${authClientBase}/accounts:signUp?key=fake-api-key`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, returnSecureToken: true })
+            });
+            const body = await res.json();
+            return { status: res.status, body };
+        };
+
+        // 1. Public self-signup with @staff.ganewa.invalid is blocked by beforeUserCreated
+        const blockedStaffSignup = await publicSignUp(`attacker${STAFF_EMAIL_SUFFIX}`, 'Password123!');
+        expect(blockedStaffSignup.status).not.toBe(200);
+
+        // Public self-signup with store email is also blocked
+        const blockedStoreSignup = await publicSignUp('ganewashoppingmallkurfi@gmail.com', 'Password123!');
+        expect(blockedStoreSignup.status).not.toBe(200);
+
+        // Regular customer self-signup succeeds
+        const uniqueCustomerEmail = `customer_${Date.now()}@gmail.com`;
+        const customerSignup = await publicSignUp(uniqueCustomerEmail, 'Password123!');
+        expect(customerSignup.status).toBe(200);
+
+        // 2. Real migrateStaffAccounts refusal & clean staff creation against Auth + Firestore emulators
+        // Clean up any prior test accounts
+        for (const uid of ['hijacker_auth_uid', 'legit_cashier_uid', 'clean_cashier_uid']) {
+            await fetch(`${authAdminBase}/accounts:delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+                body: JSON.stringify({ localId: uid })
+            }).catch(() => {});
+        }
+
+        // Create conflicting Auth user with hijacker_auth_uid
+        const hijackCreate = await fetch(`${authAdminBase}/accounts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+            body: JSON.stringify({
+                localId: 'hijacker_auth_uid',
+                email: `cashier1${STAFF_EMAIL_SUFFIX}`,
+                password: 'HijackPass123!'
+            })
         });
-    });
+        expect(hijackCreate.status).toBe(200);
 
-    it('STAFF DOMAIN BLOCKER & MIGRATION CHECKS: rejects self-signup on staff domain and refuses to link existing account [NOT VERIFIED - MOCK UNIT LOGIC ONLY]', async () => {
-        // 1. Blocker logic test (matches blockStaffDomainSelfSignup beforeUserCreated trigger)
-        const validateSignupEmail = (email: string) => {
-            const normalized = email.toLowerCase();
-            if (normalized.endsWith('@ganewa.store') || normalized === 'ganewastores@gmail.com') {
-                throw new Error('Staff accounts cannot be self-registered publicly. Contact your system administrator.');
-            }
-            return true;
-        };
+        // Run real migrate-staff-accounts.js in ../functions against the emulators
+        const functionsDir = path.resolve(__dirname, '../../../functions');
+        const script = `
+          const { initializeApp, getApps } = require('firebase-admin/app');
+          const { getFirestore } = require('firebase-admin/firestore');
+          (async () => {
+            if (!getApps().length) initializeApp({ projectId: '${emuProject}' });
+            const db = getFirestore();
+            await db.collection('users').doc('legit_cashier_uid').set({ username: 'cashier1', role: 'CASHIER', active: true });
+            await db.collection('users').doc('clean_cashier_uid').set({ username: 'cleancashier', role: 'CASHIER', active: true });
+            const { migrateStaffAccounts } = require('./lib/admin/migrate-staff-accounts.js');
+            const res = await migrateStaffAccounts({ dryRun: false });
+            console.log('MIGRATION_RESULT_JSON:' + JSON.stringify(res));
+          })().catch(e => { console.error(e); process.exit(1); });
+        `;
 
-        // Self-signup with staff domain is rejected
-        expect(() => validateSignupEmail('attacker@ganewa.store')).toThrow(
-            'Staff accounts cannot be self-registered publicly.'
-        );
-        expect(() => validateSignupEmail('ganewastores@gmail.com')).toThrow(
-            'Staff accounts cannot be self-registered publicly.'
-        );
-        // Regular customer sign-up is permitted
-        expect(validateSignupEmail('customer@gmail.com')).toBe(true);
+        const stdout = execFileSync('node', ['-e', script], {
+            cwd: functionsDir,
+            env: {
+                ...process.env,
+                FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+                FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
+                GCLOUD_PROJECT: emuProject
+            },
+            encoding: 'utf8'
+        });
 
-        // 2. Migration account linking protection (matches migrateStaffAccounts anti-hijack check)
-        const simulateMigrationAccountCheck = (existingAuthUsers: Array<{ uid: string; email: string }>, firestoreUid: string, email: string) => {
-            const existing = existingAuthUsers.find(u => u.email === email);
-            if (existing && existing.uid !== firestoreUid) {
-                throw new Error(`SECURITY ALERT: Account already exists for email ${email} under UID ${existing.uid} (differs from Firestore UID ${firestoreUid}). Refusing to link or proceed.`);
-            }
-            return 'OK';
-        };
+        const match = stdout.match(/MIGRATION_RESULT_JSON:(.*)/);
+        expect(match).toBeTruthy();
+        const migrationResult = JSON.parse(match![1]);
 
-        const existingUsers = [{ uid: 'hijacker_auth_uid', email: 'cashier1@ganewa.store' }];
-        expect(() => simulateMigrationAccountCheck(existingUsers, 'legit_cashier_firestore_uid', 'cashier1@ganewa.store')).toThrow(
-            'SECURITY ALERT: Account already exists for email cashier1@ganewa.store'
-        );
-    });
+        expect(migrationResult.errors.some((e: string) =>
+            e.includes(`SECURITY ALERT: Account already exists for email cashier1${STAFF_EMAIL_SUFFIX} under UID hijacker_auth_uid (differs from Firestore UID legit_cashier_uid)`)
+        )).toBe(true);
+
+        // Verify clean_cashier_uid was created with @staff.ganewa.invalid and can sign in
+        const createdClean = migrationResult.tempPasswordsIssued.find((x: any) => x.username === 'cleancashier');
+        expect(createdClean).toBeTruthy();
+        expect(createdClean.email).toBe(`cleancashier${STAFF_EMAIL_SUFFIX}`);
+
+        const cleanSignInRes = await fetch(`${authClientBase}/accounts:signInWithPassword?key=fake-api-key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: createdClean.email,
+                password: createdClean.tempPass,
+                returnSecureToken: true
+            })
+        });
+        expect(cleanSignInRes.status).toBe(200);
+    }, 30000);
 
     it('STOCK RULE: sale document must include this product with quantity matching the decrement; dummy mismatched sale is rejected', async () => {
         await testEnv.withSecurityRulesDisabled(async (admin) => {
