@@ -81,6 +81,9 @@ export interface Product {
   category: string;         // Display/search copy of category name
   barcode?: string;          // Optional EAN/UPC/QR barcode string for scanner lookup
   buyPrice: number; // Cost price
+  costPrice?: number;
+  supplierId?: string;
+  supplierName?: string;
   sellPrice: number; // Retail price
   wholesalePrice?: number;
   quantity: number;

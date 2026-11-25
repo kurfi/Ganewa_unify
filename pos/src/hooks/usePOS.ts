@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { runTransaction, doc, deleteDoc } from 'firebase/firestore';
+import { runTransaction, doc, deleteDoc, setDoc } from 'firebase/firestore';
 import { db, ensureSilentAuth } from '../firebase/config';
 import { logAudit, normalizeFirestoreDates } from '../firebase/firestoreHelpers';
 import { Sale, SaleItem, PaymentMethod, SaleStatus, Customer, Product } from '../types';

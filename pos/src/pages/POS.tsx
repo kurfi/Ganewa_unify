@@ -334,7 +334,7 @@ export default function POS() {
         <div className="h-[calc(100vh-4rem)] md:h-[calc(100vh-5rem)] flex flex-col md:p-4 gap-4 max-w-[1600px] mx-auto overflow-hidden">
 
             {/* ── Firebase Auth Status Banner ── */}
-            {authStatus === 'failed' && (
+            {authStatus === 'unauthenticated' && (
                 <div
                     id="pos-auth-error-banner"
                     role="alert"

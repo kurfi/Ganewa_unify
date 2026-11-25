@@ -236,7 +236,6 @@ const Orders: React.FC = () => {
         }
 
         // STEP 2 — Read ALL product documents first (no writes yet)
-        const productReads: { ref: ReturnType<typeof doc>; snap: any; item: OrderItem }[] = [];
         const productReads: Array<{ ref: any; snap: any; finSnap: any; item: any }> = [];
         for (const item of orderData.items) {
           const productRef = doc(firestoreDb, 'products', item.id);

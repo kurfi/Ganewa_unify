@@ -99,8 +99,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         // Notify backend to clear mustChangePassword custom claim
         try {
-          const { httpsCallable } = await import('firebase/functions');
-          const { functions } = await import('../../ecommerce/src/firebase/config').catch(() => ({ functions: null }));
+          const { getFunctions, httpsCallable } = await import('firebase/functions');
+          const functions = getFunctions(undefined, 'us-central1');
+          const completePasswordChangeFn = httpsCallable(functions, 'completePasswordChange');
+          await completePasswordChangeFn().catch(() => {});
           // If standalone, we also update the user's Firestore doc directly
           await updateDoc(doc(db, 'users', auth.currentUser.uid), {
             mustChangePassword: false

@@ -56,7 +56,7 @@ export async function runBackfillMigration(): Promise<BackfillReport> {
     for (const docSnap of productsSnap.docs) {
       const data = docSnap.data();
       const quantity = Number(data.quantity) || 0;
-      const buyPrice = finMap.get(docSnap.id) ?? Number(data.buyPrice) || 0;
+      const buyPrice = finMap.get(docSnap.id) ?? (Number(data.buyPrice) || 0);
       const correctStockValue = quantity * buyPrice;
 
       // Only write if stockValue is missing or differs
