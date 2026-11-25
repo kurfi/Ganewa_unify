@@ -2,6 +2,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
+import { STAFF_EMAIL_DOMAIN } from '../constants/staffAuth';
 
 if (!getApps().length) {
     initializeApp();
@@ -29,8 +30,8 @@ export interface MigrationOptions {
 /**
  * Staff Account Migration
  * 
- * Maps existing username-based staff to standard corporate emails:
- * <username>@ganewa.store (or specified domain).
+ * Maps existing username-based staff to hidden internal emails:
+ * <username>@staff.ganewa.invalid (or specified domain).
  * Sets custom claims role (SUPER_ADMIN, ADMIN, CASHIER).
  * 
  * IMPORTANT: Does NOT delete or scrub plaintext passwords.
@@ -39,7 +40,7 @@ export interface MigrationOptions {
  */
 export async function migrateStaffAccounts(options: MigrationOptions = {}) {
     const isDryRun = options.dryRun ?? false;
-    const domain = options.domain || 'ganewa.store';
+    const domain = options.domain || STAFF_EMAIL_DOMAIN;
     console.log(`[StaffMigration] Starting migration... (dryRun=${isDryRun}, domain=${domain})`);
 
     const usersSnapshot = await db.collection('users').get();

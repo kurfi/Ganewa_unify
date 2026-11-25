@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createOrder = exports.blockStaffDomainSelfSignup = exports.completePasswordChange = exports.setUserRole = exports.syncUserCreditInfo = exports.syncShopUserCreditOnLink = exports.syncCustomerCreditOnWritten = exports.searchCustomerSalesPOS = exports.getCustomerSalesHistory = exports.handleBudgetAlert = exports.onProductChange = exports.reconcileCustomerDebt = exports.cleanupAuditLogs = exports.onProductStockChange = exports.recalculateRunningBalance = exports.generateReport = exports.rollupDailyStats = exports.getNextInvoiceNumber = void 0;
+exports.createOrder = exports.blockStaffDomainSelfSignup = exports.setStaffPassword = exports.completePasswordChange = exports.setUserRole = exports.syncUserCreditInfo = exports.syncShopUserCreditOnLink = exports.syncCustomerCreditOnWritten = exports.searchCustomerSalesPOS = exports.getCustomerSalesHistory = exports.handleBudgetAlert = exports.onProductChange = exports.reconcileCustomerDebt = exports.cleanupAuditLogs = exports.onProductStockChange = exports.recalculateRunningBalance = exports.generateReport = exports.rollupDailyStats = exports.getNextInvoiceNumber = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const pubsub_1 = require("firebase-functions/v2/pubsub");
 const https_1 = require("firebase-functions/v2/https");
@@ -12,6 +12,7 @@ const auth_1 = require("firebase-admin/auth");
 const firestore_2 = require("firebase-admin/firestore");
 const date_fns_1 = require("date-fns");
 const date_fns_tz_1 = require("date-fns-tz");
+const staffAuth_1 = require("./constants/staffAuth");
 // ─────────────────────────────────────────────────────────────
 //  Admin SDK initialisation (singleton)
 // ─────────────────────────────────────────────────────────────
@@ -897,12 +898,66 @@ exports.completePasswordChange = (0, https_1.onCall)({ region: 'us-central1', co
     console.log(`[completePasswordChange] User ${uid} successfully cleared mustChangePassword flag.`);
     return { success: true };
 });
+// ─────────────────────────────────────────────────────────────
+//  SUPER_ADMIN-only: Reset a staff member's password
+//  (Email password reset links cannot be delivered to @staff.ganewa.invalid)
+// ─────────────────────────────────────────────────────────────
+exports.setStaffPassword = (0, https_1.onCall)({ region: 'us-central1', cors: true }, async (request) => {
+    var _a, _b;
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'Must be signed in to reset a staff password.');
+    }
+    const callerRole = request.auth.token.role;
+    if (callerRole !== 'SUPER_ADMIN') {
+        throw new https_1.HttpsError('permission-denied', 'Only a verified SUPER_ADMIN can reset a staff member password.');
+    }
+    const { targetUid, newPassword, requirePasswordChange = true } = (request.data || {});
+    if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
+        throw new https_1.HttpsError('invalid-argument', 'targetUid is required.');
+    }
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+        throw new https_1.HttpsError('invalid-argument', 'newPassword must be at least 8 characters long.');
+    }
+    const trimmedUid = targetUid.trim();
+    const authAdmin = (0, auth_1.getAuth)();
+    let targetUser;
+    try {
+        targetUser = await authAdmin.getUser(trimmedUid);
+    }
+    catch (err) {
+        if ((err === null || err === void 0 ? void 0 : err.code) === 'auth/user-not-found') {
+            throw new https_1.HttpsError('not-found', `Staff user ${trimmedUid} not found.`);
+        }
+        throw err;
+    }
+    const targetRole = ((_a = targetUser.customClaims) === null || _a === void 0 ? void 0 : _a.role) || '';
+    const isStaffEmail = (targetUser.email || '').toLowerCase().endsWith(staffAuth_1.STAFF_EMAIL_SUFFIX);
+    const userDocSnap = await db.collection('users').doc(trimmedUid).get();
+    if (!isStaffEmail && !userDocSnap.exists && !['SUPER_ADMIN', 'ADMIN', 'CASHIER'].includes(targetRole)) {
+        throw new https_1.HttpsError('failed-precondition', 'Target user is not a staff account.');
+    }
+    await authAdmin.updateUser(trimmedUid, { password: newPassword });
+    await authAdmin.revokeRefreshTokens(trimmedUid);
+    const resolvedRole = targetRole || ((_b = userDocSnap.data()) === null || _b === void 0 ? void 0 : _b.role) || 'CASHIER';
+    const mustChange = requirePasswordChange !== false;
+    await authAdmin.setCustomUserClaims(trimmedUid, {
+        role: resolvedRole,
+        mustChangePassword: mustChange
+    });
+    await db.collection('users').doc(trimmedUid).set({
+        mustChangePassword: mustChange,
+        passwordResetAt: firestore_2.FieldValue.serverTimestamp(),
+        passwordResetBy: request.auth.uid
+    }, { merge: true });
+    console.log(`[setStaffPassword] SUPER_ADMIN ${request.auth.uid} reset password for staff ${trimmedUid} (mustChangePassword=${mustChange})`);
+    return { success: true, targetUid: trimmedUid, mustChangePassword: mustChange };
+});
 exports.blockStaffDomainSelfSignup = (0, identity_1.beforeUserCreated)(async (event) => {
     var _a;
     const user = event.data;
     const email = ((_a = user === null || user === void 0 ? void 0 : user.email) === null || _a === void 0 ? void 0 : _a.toLowerCase()) || '';
     // Block any public self-registration attempting to register with the staff domain or store email
-    if (email.endsWith('@ganewa.store') || email === STORE_EMAIL) {
+    if (email.endsWith(staffAuth_1.STAFF_EMAIL_SUFFIX) || email === STORE_EMAIL) {
         console.warn(`[blockStaffDomainSelfSignup] Rejected public self-signup attempt for staff email: ${email}`);
         throw new identity_1.HttpsError('permission-denied', 'Staff accounts cannot be self-registered publicly. Contact your system administrator.');
     }

@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { STAFF_EMAIL_SUFFIX } from '../constants/staffAuth';
 
 if (!getApps().length) {
     initializeApp();
@@ -9,7 +10,10 @@ if (!getApps().length) {
 const auth = getAuth();
 const db = getFirestore();
 
-export async function bootstrapSuperAdmin(email: string, password?: string, displayName = 'Super Administrator') {
+export async function bootstrapSuperAdmin(emailOrUsername: string, password?: string, displayName = 'Super Administrator') {
+    const email = emailOrUsername.includes('@')
+        ? emailOrUsername.trim().toLowerCase()
+        : `${emailOrUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')}${STAFF_EMAIL_SUFFIX}`;
     console.log(`[BootstrapSuperAdmin] Bootstrapping primary SUPER_ADMIN: ${email}...`);
 
     let user;

@@ -8,6 +8,7 @@ import {
   updatePassword as firebaseUpdatePassword
 } from 'firebase/auth';
 import { collection, getDocs, query, where, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { STAFF_EMAIL_SUFFIX } from '../../../functions/src/constants/staffAuth';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -65,16 +66,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       let email = usernameOrEmail.trim();
 
-      // If entered a plain username, resolve email from Firestore users collection
+      // If entered a plain username, resolve email deterministically using STAFF_EMAIL_SUFFIX
       if (!email.includes('@')) {
-        const q = query(collection(db, 'users'), where('username', '==', email));
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const docData = snapshot.docs[0].data();
-          email = docData.email || `${email}@ganewa.store`;
-        } else {
-          email = `${email}@ganewa.store`;
+        const normalizedUsername = email.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        let resolvedEmail = `${normalizedUsername}${STAFF_EMAIL_SUFFIX}`;
+        try {
+          const q = query(collection(db, 'users'), where('username', '==', email));
+          const snapshot = await getDocs(q);
+          if (!snapshot.empty) {
+            const docData = snapshot.docs[0].data();
+            if (docData.email && !String(docData.email).endsWith('@ganewa.store')) {
+              resolvedEmail = docData.email;
+            }
+          }
+        } catch {
+          // Unauthenticated users cannot query /users; deterministic staff suffix is used
         }
+        email = resolvedEmail;
       }
 
       await signInWithEmailAndPassword(auth, email, password);

@@ -9,6 +9,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue, AggregateField, Timestamp } from 'firebase-admin/firestore';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
+import { STAFF_EMAIL_SUFFIX } from './constants/staffAuth';
 
 // ─────────────────────────────────────────────────────────────
 //  Admin SDK initialisation (singleton)
@@ -1155,12 +1156,97 @@ export const completePasswordChange = onCall(
         return { success: true };
     }
 );
+
+// ─────────────────────────────────────────────────────────────
+//  SUPER_ADMIN-only: Reset a staff member's password
+//  (Email password reset links cannot be delivered to @staff.ganewa.invalid)
+// ─────────────────────────────────────────────────────────────
+export const setStaffPassword = onCall(
+    { region: 'us-central1', cors: true },
+    async (request) => {
+        if (!request.auth) {
+            throw new HttpsError('unauthenticated', 'Must be signed in to reset a staff password.');
+        }
+
+        const callerRole = request.auth.token.role;
+        if (callerRole !== 'SUPER_ADMIN') {
+            throw new HttpsError(
+                'permission-denied',
+                'Only a verified SUPER_ADMIN can reset a staff member password.'
+            );
+        }
+
+        const {
+            targetUid,
+            newPassword,
+            requirePasswordChange = true
+        } = (request.data || {}) as {
+            targetUid?: string;
+            newPassword?: string;
+            requirePasswordChange?: boolean;
+        };
+
+        if (!targetUid || typeof targetUid !== 'string' || !targetUid.trim()) {
+            throw new HttpsError('invalid-argument', 'targetUid is required.');
+        }
+        if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+            throw new HttpsError(
+                'invalid-argument',
+                'newPassword must be at least 8 characters long.'
+            );
+        }
+
+        const trimmedUid = targetUid.trim();
+        const authAdmin = getAuth();
+
+        let targetUser;
+        try {
+            targetUser = await authAdmin.getUser(trimmedUid);
+        } catch (err: any) {
+            if (err?.code === 'auth/user-not-found') {
+                throw new HttpsError('not-found', `Staff user ${trimmedUid} not found.`);
+            }
+            throw err;
+        }
+
+        const targetRole = (targetUser.customClaims?.role as string | undefined) || '';
+        const isStaffEmail = (targetUser.email || '').toLowerCase().endsWith(STAFF_EMAIL_SUFFIX);
+        const userDocSnap = await db.collection('users').doc(trimmedUid).get();
+
+        if (!isStaffEmail && !userDocSnap.exists && !['SUPER_ADMIN', 'ADMIN', 'CASHIER'].includes(targetRole)) {
+            throw new HttpsError(
+                'failed-precondition',
+                'Target user is not a staff account.'
+            );
+        }
+
+        await authAdmin.updateUser(trimmedUid, { password: newPassword });
+        await authAdmin.revokeRefreshTokens(trimmedUid);
+
+        const resolvedRole = targetRole || (userDocSnap.data()?.role as string | undefined) || 'CASHIER';
+        const mustChange = requirePasswordChange !== false;
+        await authAdmin.setCustomUserClaims(trimmedUid, {
+            role: resolvedRole,
+            mustChangePassword: mustChange
+        });
+
+        await db.collection('users').doc(trimmedUid).set({
+            mustChangePassword: mustChange,
+            passwordResetAt: FieldValue.serverTimestamp(),
+            passwordResetBy: request.auth.uid
+        }, { merge: true });
+
+        console.log(`[setStaffPassword] SUPER_ADMIN ${request.auth.uid} reset password for staff ${trimmedUid} (mustChangePassword=${mustChange})`);
+        return { success: true, targetUid: trimmedUid, mustChangePassword: mustChange };
+    }
+);
+
 export const blockStaffDomainSelfSignup = beforeUserCreated(async (event) => {
     const user = event.data;
     const email = user?.email?.toLowerCase() || '';
 
     // Block any public self-registration attempting to register with the staff domain or store email
-    if (email.endsWith('@ganewa.store') || email === STORE_EMAIL) {
+    if (email.endsWith(STAFF_EMAIL_SUFFIX) || email === STORE_EMAIL) {
         console.warn(`[blockStaffDomainSelfSignup] Rejected public self-signup attempt for staff email: ${email}`);
         throw new AuthBlockingError(
             'permission-denied',
